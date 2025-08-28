@@ -365,12 +365,13 @@ app.post('/api/excel-to-word', upload.single('file'), asyncHandler(async (req, r
   }
 }));
 
+// UPDATED: This endpoint now generates ZIP with individual PNG graphs instead of PDF
 app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
   }
 
-  console.log('Processing Word file:', req.file.filename);
+  console.log('Processing Word file for ZIP generation:', req.file.filename);
 
   const graphFiles = [];
 
@@ -389,23 +390,25 @@ app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res
       throw new AppError(`Invalid table format: ${validation.errors.join(', ')}`, 422);
     }
     
-    // Generate graphs
+    // Generate graphs (individual PNG files)
     const graphs = await graphService.generateGraphs(tables);
     graphs.forEach(g => graphFiles.push(g.imagePath));
     
-    // Create ZIP archive with graphs
+    // Create ZIP archive with individual PNG graphs instead of PDF
     const zipFilePath = await zipService.createZipArchive(graphs, req.file.filename);
     
-    // Send file
+    console.log('ZIP file created:', zipFilePath);
+    
+    // Send ZIP file instead of PDF
     res.download(zipFilePath, 'thesis-graphs.zip', async (err) => {
       if (err) {
-        console.error('Error sending file:', err);
+        console.error('Error sending ZIP file:', err);
         if (!res.headersSent) {
-          res.status(500).json({ success: false, error: 'Error downloading file' });
+          res.status(500).json({ success: false, error: 'Error downloading ZIP file' });
         }
       }
       
-      // Cleanup
+      // Cleanup all generated files
       const filesToClean = [req.file.path, zipFilePath, ...graphFiles];
       await cleanup.cleanupFiles(filesToClean);
     });

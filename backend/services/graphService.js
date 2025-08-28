@@ -483,7 +483,7 @@ class GraphService {
 
     const xAxisTitle = tableData.xLabel || tableData.xTitle || (tableData.title && tableData.title.split('-').pop().trim()) || 'Category';
     // FIXED: Changed Y-axis label from "Grades" to "Number of patients (No. patients)"
-    const yAxisTitle = tableData.yLabel || tableData.yTitle || 'Number of patients (No. patients)';
+    const yAxisTitle = tableData.yLabel || tableData.yTitle || 'No. patients';
 
     const chart = new Chart(ctx, {
       type: 'bar',
@@ -525,7 +525,7 @@ class GraphService {
           y: {
             beginAtZero: true,
             ticks: { font: { size: 24, weight: '600' }, stepSize: 2, color: '#000000ff' },
-            grid: { display: false, color: 'rgba(0,0,0,0.06)', lineWidth: 1 },
+            grid: { display: true, color: 'rgba(0,0,0,0.06)', lineWidth: 1, drawBorder: true, borderWidth: 4, borderColor: '#111827' },
             title: { display: true, text: yAxisTitle, font: { size: 30, weight: '800' }, color: '#000000ff' }
           }
         },
@@ -764,10 +764,10 @@ class GraphService {
         scales: {
           x: { ticks: { font: { size: 16, weight: '700' } }, grid: { display: false } },
           // FIXED: Changed Y-axis label here too
-          y: { 
-            beginAtZero: true, 
+          y: {
+            beginAtZero: true,
             ticks: { font: { size: 16, weight: '700' }, stepSize: 1 },
-            title: { display: true, text: 'Number of patients (No. patients)', font: { size: 16, weight: '700' } }
+            title: { display: true, text: 'No. patients', font: { size: 16, weight: '700' } }
           }
         }
       }
