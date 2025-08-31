@@ -63,7 +63,6 @@ function App() {
     }
   };
 
-  // UPDATED: This function now handles ZIP file downloads with individual PNG graphs
   const handleWordToPdf = async () => {
     if (!file) {
       setError('Please select a Word file');
@@ -90,22 +89,70 @@ function App() {
 
       const blob = await response.blob();
       
-      // Create download link for ZIP file instead of PDF
+      // Create download link for ZIP file
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', 'thesis-graphs.zip'); // Changed from PDF to ZIP
+      link.setAttribute('download', 'thesis-graphs.zip');
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
 
-      setSuccess('ZIP file with individual PNG graphs generated successfully!'); // Updated success message
+      setSuccess('ZIP file with individual PNG graphs generated successfully!');
       setFile(null);
       document.getElementById('file-input').value = '';
     } catch (err) {
       console.error('Error:', err);
       setError(err.message || 'Failed to generate graphs ZIP');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // NEW FUNCTION for Signs & Symptoms Analysis
+  const handleSignsAnalysis = async () => {
+    if (!file) {
+      setError('Please select a Word file with Signs & Symptoms data');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await fetch(`${API_URL}/signs-analysis`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate Signs & Symptoms graphs');
+      }
+
+      const blob = await response.blob();
+      
+      // Create download link for ZIP file
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'signs-symptoms-graphs.zip');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setSuccess('Signs & Symptoms analysis graphs generated successfully!');
+      setFile(null);
+      document.getElementById('file-input').value = '';
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message || 'Failed to generate Signs & Symptoms graphs');
     } finally {
       setLoading(false);
     }
@@ -118,6 +165,39 @@ function App() {
     setSuccess('');
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
+  };
+
+  const getOptionConfig = (option) => {
+    const configs = {
+      'excel-to-word': {
+        title: 'Excel to Word Tables',
+        description: 'Upload Excel master charts to generate formatted tables in Word',
+        icon: '📊',
+        fileTypes: '.xlsx,.xls',
+        fileDescription: 'Accepted formats: .xlsx, .xls',
+        buttonText: 'Generate Word Document',
+        handler: handleExcelToWord
+      },
+      'word-to-pdf': {
+        title: 'Word Tables to PNG Graphs ZIP',
+        description: 'Upload Word document with tables to generate individual 3D PNG graphs in ZIP file',
+        icon: '📈',
+        fileTypes: '.docx,.doc',
+        fileDescription: 'Accepted formats: .docx, .doc',
+        buttonText: 'Generate PNG Graphs ZIP',
+        handler: handleWordToPdf
+      },
+      'signs-analysis': {
+        title: 'Signs & Symptoms Analysis',
+        description: 'Upload Word document with Signs & Symptoms tables to generate percentage-based assessment graphs',
+        icon: '🔬',
+        fileTypes: '.docx,.doc',
+        fileDescription: 'Accepted formats: .docx, .doc',
+        buttonText: 'Generate Signs Analysis Graphs',
+        handler: handleSignsAnalysis
+      }
+    };
+    return configs[option];
   };
 
   return (
@@ -149,6 +229,16 @@ function App() {
                 <h3>Word Tables to PNG Graphs ZIP</h3>
                 <p>Upload Word document with tables to generate individual 3D PNG graphs in ZIP file</p>
               </div>
+
+              {/* NEW OPTION */}
+              <div 
+                className="option-card"
+                onClick={() => setActiveOption('signs-analysis')}
+              >
+                <div className="option-icon">🔬</div>
+                <h3>Signs & Symptoms Analysis</h3>
+                <p>Upload Word document with Signs & Symptoms tables to generate percentage-based assessment graphs</p>
+              </div>
             </div>
           </div>
         ) : (
@@ -157,17 +247,13 @@ function App() {
               ← Back to options
             </button>
             
-            <h2>
-              {activeOption === 'excel-to-word' 
-                ? 'Excel to Word Tables' 
-                : 'Word Tables to PNG Graphs ZIP'}
-            </h2>
+            <h2>{getOptionConfig(activeOption).title}</h2>
             
             <div className="upload-area">
               <input
                 id="file-input"
                 type="file"
-                accept={activeOption === 'excel-to-word' ? '.xlsx,.xls' : '.docx,.doc'}
+                accept={getOptionConfig(activeOption).fileTypes}
                 onChange={handleFileChange}
                 className="file-input"
               />
@@ -179,17 +265,13 @@ function App() {
                     ? `Selected: ${file.name}` 
                     : `Click to select ${activeOption === 'excel-to-word' ? 'Excel' : 'Word'} file`}
                 </p>
-                <small>
-                  {activeOption === 'excel-to-word' 
-                    ? 'Accepted formats: .xlsx, .xls' 
-                    : 'Accepted formats: .docx, .doc'}
-                </small>
+                <small>{getOptionConfig(activeOption).fileDescription}</small>
               </label>
             </div>
 
             {error && (
               <div className="message error-message">
-                <div className="error-icon">❌</div>
+                <div className="error-icon">⚠</div>
                 <div className="error-content">
                   <p className="error-text">{error}</p>
                   {error.includes('Trial Group or Control Group') && (
@@ -216,7 +298,7 @@ function App() {
 
             <button
               className="process-button"
-              onClick={activeOption === 'excel-to-word' ? handleExcelToWord : handleWordToPdf}
+              onClick={getOptionConfig(activeOption).handler}
               disabled={!file || loading}
             >
               {loading ? (
@@ -225,7 +307,7 @@ function App() {
                   Processing...
                 </>
               ) : (
-                `Generate ${activeOption === 'excel-to-word' ? 'Word Document' : 'PNG Graphs ZIP'}`
+                getOptionConfig(activeOption).buttonText
               )}
             </button>
           </div>

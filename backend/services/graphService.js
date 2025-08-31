@@ -48,6 +48,304 @@ class GraphService {
     return graphs;
   }
 
+  // NEW METHOD: Generate Signs & Symptoms graphs
+  async generateSignsGraphs(tables) {
+    if (!Array.isArray(tables)) throw new Error('tables must be an array');
+    const graphs = [];
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      const imagePath = await this.createSignsAssessmentChart(table, i + 1);
+      graphs.push({
+        title: table.title || `Signs & Symptoms Analysis ${i + 1}`,
+        tableNumber: i + 1,
+        imagePath,
+        filename: `signs-graph-${i + 1}-table-${table.tableNumber || i + 1}.png`
+      });
+    }
+    return graphs;
+  }
+
+  // NEW METHOD: Create Signs & Symptoms Assessment Chart
+  async createSignsAssessmentChart(tableData, tableNumber) {
+    const width = 2400;
+    const height = 1500;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    if (!tableData || !Array.isArray(tableData.signs) || !tableData.data) {
+      throw new Error('Invalid Signs tableData structure');
+    }
+
+    const labels = tableData.signs; // ["Vedana", "Varna", "Sraava", etc.]
+    const assessmentPeriods = tableData.assessments; // ["7 day", "14 day", "21 day", "28 day"]
+    
+    // Create datasets for each assessment period
+    const datasets = [];
+    const colors = ['#4ade80', '#f59e0b', '#ef4444', '#8b5cf6']; // Green, Orange, Red, Purple
+    
+    assessmentPeriods.forEach((period, index) => {
+      const data = labels.map(sign => tableData.data[sign] ? tableData.data[sign][period] || 0 : 0);
+      
+      datasets.push({
+        label: `${period}`,
+        data: data,
+        backgroundColor: colors[index % colors.length],
+        borderColor: '#000000ff',
+        borderWidth: 2,
+        barPercentage: 0.6,
+        categoryPercentage: 0.8
+      });
+    });
+
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets
+      },
+      options: {
+        responsive: false,
+        animation: false,
+        maintainAspectRatio: false,
+        layout: { padding: { left: 120, right: 260, top: 90, bottom: 140 } },
+        plugins: {
+          title: {
+            display: true,
+            text: `Graph no ${tableNumber} - Signs & Symptoms Assessment Analysis`,
+            color: '#111827',
+            font: { size: 36, weight: '700', family: "'Helvetica Neue', Arial" },
+            padding: 70
+          },
+          legend: {
+            display: true,
+            position: 'right',
+            align: 'center',
+            labels: { font: { size: 20, weight: '600' } }
+          },
+          tooltip: { 
+            enabled: true,
+            callbacks: {
+              label: function(context) {
+                return `${context.dataset.label}: ${context.parsed.y}%`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { 
+              font: { size: 20, weight: '600' }, 
+              color: '#000000ff',
+              maxRotation: 45,
+              minRotation: 0
+            },
+            grid: { display: false, drawBorder: true, borderWidth: 4, borderColor: '#111827' },
+            title: { 
+              display: true, 
+              text: 'Signs & Symptoms', 
+              font: { size: 30, weight: '800' }, 
+              color: '#000000ff' 
+            }
+          },
+          y: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { 
+              font: { size: 24, weight: '600' }, 
+              stepSize: 10, 
+              color: '#000000ff',
+              callback: function(value) {
+                return value + '%';
+              }
+            },
+            grid: { 
+              display: true, 
+              color: 'rgba(0,0,0,0.06)', 
+              lineWidth: 1, 
+              drawBorder: true, 
+              borderWidth: 4, 
+              borderColor: '#111827' 
+            },
+            title: { 
+              display: true, 
+              text: 'Percentage (%)', 
+              font: { size: 30, weight: '800' }, 
+              color: '#000000ff' 
+            }
+          }
+        },
+        elements: { bar: { borderWidth: 5 } }
+      },
+      plugins: [
+        {
+          id: 'signs-3d-rect-platform',
+          beforeDatasetsDraw: chartInstance => {
+            const ctx = chartInstance.ctx;
+            const chartArea = chartInstance.chartArea;
+
+            const dx = Math.max(8, Math.round((chartArea.right - chartArea.left) * 0.01));
+            const dy = Math.max(6, Math.round(dx * 0.45));
+            const platformDx = Math.round(dx * 7);
+            const platformDy = Math.round(dy * 6);
+
+            const yScale = chartInstance.scales.y;
+            const baseY = (yScale && typeof yScale.getPixelForValue === 'function') ? yScale.getPixelForValue(0) : chartArea.bottom;
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.fillStyle = '#9aa0a6';
+            ctx.strokeStyle = '#4b4f52';
+            ctx.lineWidth = 2.2;
+
+            const leftX = chartArea.left - dx - 6;
+            const rightX = chartArea.right + 6;
+            ctx.moveTo(leftX, baseY);
+            ctx.lineTo(rightX, baseY);
+            ctx.lineTo(rightX + platformDx, baseY - platformDy);
+            ctx.lineTo(leftX + platformDx, baseY - platformDy);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+          },
+
+          afterDatasetsDraw: chartInstance => {
+            const ctx = chartInstance.ctx;
+            const chartArea = chartInstance.chartArea;
+            const datasets = chartInstance.data.datasets;
+
+            const dx = Math.max(8, Math.round((chartArea.right - chartArea.left) * 0.01));
+            const dy = Math.max(6, Math.round(dx * 0.45));
+
+            const datasetCount = datasets.length;
+            const metas = datasets.map((_, di) => chartInstance.getDatasetMeta(di));
+            const categoryCount = (metas[0] && metas[0].data) ? metas[0].data.length : 0;
+
+            for (let idx = 0; idx < categoryCount; idx++) {
+              const lefts = [];
+              const rights = [];
+              const barsForCategory = [];
+
+              for (let di = 0; di < datasetCount; di++) {
+                const meta = metas[di];
+                if (!meta || !meta.data || !meta.data[idx]) continue;
+                const bar = meta.data[idx];
+                barsForCategory.push({ bar, dsIndex: di });
+                const barLeft = bar.x - (bar.width / 2);
+                const barRight = bar.x + (bar.width / 2);
+                lefts.push(barLeft);
+                rights.push(barRight);
+              }
+
+              if (barsForCategory.length === 0) continue;
+
+              const minLeft = Math.min(...lefts);
+              const maxRight = Math.max(...rights);
+              const totalSpan = Math.max(1, maxRight - minLeft);
+              const newWidth = totalSpan / barsForCategory.length;
+
+              barsForCategory.forEach((entry, placeIndex) => {
+                const bar = entry.bar;
+                const dsIndex = entry.dsIndex;
+
+                ctx.save();
+
+                const leftX = minLeft + placeIndex * newWidth;
+                const rightX = leftX + newWidth;
+                const w = Math.max(1, rightX - leftX);
+
+                const y = bar.y;
+                const bottomY = bar.base;
+
+                const ds = datasets[dsIndex];
+                const baseColor = ds.backgroundColor || '#777';
+
+                // FRONT FACE
+                ctx.fillStyle = baseColor;
+                ctx.beginPath();
+                ctx.rect(leftX, y, w, bottomY - y);
+                ctx.fill();
+
+                // TOP FACE
+                ctx.fillStyle = baseColor;
+                ctx.beginPath();
+                ctx.moveTo(leftX, y);
+                ctx.lineTo(rightX, y);
+                ctx.lineTo(rightX + dx, y - dy);
+                ctx.lineTo(leftX + dx, y - dy);
+                ctx.closePath();
+                ctx.fill();
+
+                // RIGHT SIDE FACE
+                ctx.fillStyle = baseColor;
+                ctx.beginPath();
+                ctx.moveTo(rightX, y);
+                ctx.lineTo(rightX + dx, y - dy);
+                ctx.lineTo(rightX + dx, bottomY - dy);
+                ctx.lineTo(rightX, bottomY);
+                ctx.closePath();
+                ctx.fill();
+
+                // Outlines
+                ctx.lineWidth = 2.4;
+                ctx.strokeStyle = '#111827';
+
+                ctx.beginPath();
+                ctx.rect(leftX, y, w, bottomY - y);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(leftX, y);
+                ctx.lineTo(rightX, y);
+                ctx.lineTo(rightX + dx, y - dy);
+                ctx.lineTo(leftX + dx, y - dy);
+                ctx.closePath();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(rightX, y);
+                ctx.lineTo(rightX + dx, y - dy);
+                ctx.lineTo(rightX + dx, bottomY - dy);
+                ctx.lineTo(rightX, bottomY);
+                ctx.closePath();
+                ctx.stroke();
+
+                // Numeric label above top
+                const value = ds.data[idx];
+                if (typeof value !== 'undefined' && value !== null) {
+                  const labelX = leftX + w/2 + dx / 2;
+                  const labelY = y - dy - 2;
+                  ctx.font = '700 24px "Helvetica Neue", Arial';
+                  ctx.fillStyle = '#111827';
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'bottom';
+                  ctx.fillText(String(value) + '%', labelX, labelY);
+                }
+
+                ctx.restore();
+              });
+            }
+          }
+        }
+      ]
+    });
+
+    chart.update();
+
+    await this.ensureUploadDir();
+    const filename = `signs-3drect-${tableNumber}-${Date.now()}.png`;
+    const filepath = path.join(UPLOAD_DIR, filename);
+    const buffer = canvas.toBuffer('image/png');
+    await fs.writeFile(filepath, buffer);
+
+    try { chart.destroy(); } catch (e) { /* ignore */ }
+
+    return filepath;
+  }
+
   // Helper method to sanitize filename
   sanitizeFilename(text) {
     return text.replace(/[^a-zA-Z0-9-_]/g, '-').toLowerCase();

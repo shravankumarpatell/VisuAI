@@ -9,6 +9,7 @@ require('dotenv').config();
 const excelService = require('./services/excelService');
 const wordService = require('./services/wordService');
 const wordParserService = require('./services/wordParserService');
+const signsParserService = require('./services/signsParserService'); // NEW
 const graphService = require('./services/graphService');
 const pdfService = require('./services/pdfService');
 const zipService = require('./services/zipService');
@@ -69,10 +70,14 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const allowedTypes = {
       'excel-to-word': ['.xlsx', '.xls'],
-      'word-to-pdf': ['.docx', '.doc']
+      'word-to-pdf': ['.docx', '.doc'],
+      'signs-analysis': ['.docx', '.doc'] // NEW
     };
     
-    const route = req.path.includes('excel-to-word') ? 'excel-to-word' : 'word-to-pdf';
+    let route = 'word-to-pdf'; // default
+    if (req.path.includes('excel-to-word')) route = 'excel-to-word';
+    else if (req.path.includes('signs-analysis')) route = 'signs-analysis'; // NEW
+    
     const ext = path.extname(file.originalname).toLowerCase();
     
     if (!ValidationUtils.validateFileExtension(file.originalname, allowedTypes[route])) {
@@ -83,7 +88,7 @@ const upload = multer({
   }
 });
 
-// Routes
+// Existing routes
 app.post('/api/excel-to-word', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -123,7 +128,6 @@ app.post('/api/excel-to-word', upload.single('file'), asyncHandler(async (req, r
   }
 }));
 
-// UPDATED: This endpoint now generates ZIP with individual PNG graphs instead of PDF
 app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -152,12 +156,12 @@ app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res
     const graphs = await graphService.generateGraphs(tables);
     graphs.forEach(g => graphFiles.push(g.imagePath));
     
-    // Create ZIP archive with individual PNG graphs instead of PDF
+    // Create ZIP archive with individual PNG graphs
     const zipFilePath = await zipService.createZipArchive(graphs, req.file.filename);
     
     console.log('ZIP file created:', zipFilePath);
     
-    // Send ZIP file instead of PDF
+    // Send ZIP file
     res.download(zipFilePath, 'thesis-graphs.zip', async (err) => {
       if (err) {
         console.error('Error sending ZIP file:', err);
@@ -175,6 +179,67 @@ app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res
     // Cleanup on error
     const filesToClean = [req.file.path, ...graphFiles];
     await cleanup.cleanupFiles(filesToClean);
+    throw error;
+  }
+}));
+
+// CORRECTED ROUTE: Signs & Symptoms Analysis
+app.post('/api/signs-analysis', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError('No file uploaded', 400);
+  }
+
+  console.log('Processing Signs & Symptoms file:', req.file.filename);
+
+  const graphFiles = [];
+
+  try {
+    // Validate file size
+    if (!ValidationUtils.validateFileSize(req.file.size, parseInt(process.env.MAX_FILE_SIZE_MB) || 10)) {
+      throw new AppError('File size exceeds limit', 400);
+    }
+
+    // Parse Signs & Symptoms document
+    const tables = await signsParserService.parseSignsDocument(req.file.path);
+    
+    // Validate signs data using ValidationUtils (CORRECTED)
+    const validation = ValidationUtils.validateSignsDocument(tables);
+    if (!validation.valid) {
+      throw new AppError(`Invalid Signs document format: ${validation.errors.join(', ')}`, 422);
+    }
+    
+    // Generate signs analysis graphs (individual PNG files)
+    const graphs = await graphService.generateSignsGraphs(tables);
+    graphs.forEach(g => graphFiles.push(g.imagePath));
+    
+    // Create ZIP archive with individual PNG graphs (CORRECTED: 'signs' type)
+    const zipFilePath = await zipService.createZipArchive(graphs, req.file.filename, 'signs');
+    
+    console.log('Signs analysis ZIP file created:', zipFilePath);
+    
+    // Send ZIP file
+    res.download(zipFilePath, 'signs-symptoms-graphs.zip', async (err) => {
+      if (err) {
+        console.error('Error sending Signs ZIP file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, error: 'Error downloading Signs ZIP file' });
+        }
+      }
+      
+      // Cleanup all generated files
+      const filesToClean = [req.file.path, zipFilePath, ...graphFiles];
+      await cleanup.cleanupFiles(filesToClean);
+    });
+
+  } catch (error) {
+    // Cleanup on error
+    const filesToClean = [req.file.path, ...graphFiles];
+    await cleanup.cleanupFiles(filesToClean);
+    
+    // Check for specific error types and provide appropriate messages
+    if (error.message.includes('Failed to parse')) {
+      throw new AppError(`Failed to generate Signs analysis: ${error.message}`, 500);
+    }
     throw error;
   }
 }));

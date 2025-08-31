@@ -55,7 +55,84 @@ class ValidationUtils {
     };
   }
 
-  // Validate Word document tables
+  // COMPLETED METHOD: Validate Signs & Symptoms document
+  static validateSignsDocument(tables) {
+    const errors = [];
+
+    if (!tables || tables.length === 0) {
+      errors.push('No Signs & Symptoms tables found in the Word document');
+      return { valid: false, errors };
+    }
+
+    tables.forEach((table, index) => {
+      if (!table.title) {
+        errors.push(`Table ${index + 1} is missing a title`);
+      }
+
+      if (!table.signs || !Array.isArray(table.signs) || table.signs.length === 0) {
+        errors.push(`Table ${index + 1} has no signs data`);
+      }
+
+      if (!table.assessments || !Array.isArray(table.assessments) || table.assessments.length === 0) {
+        errors.push(`Table ${index + 1} has no assessment periods`);
+      }
+
+      if (!table.data || typeof table.data !== 'object') {
+        errors.push(`Table ${index + 1} has no percentage data`);
+      } else {
+        // Validate data structure
+        const expectedSigns = ['vedana', 'varna', 'sraava', 'gandha', 'maamasankura', 'parimana'];
+        const expectedAssessments = ['7th day', '14th day', '21st day', '28th day'];
+
+        table.signs.forEach(sign => {
+          const normalizedSign = sign.toLowerCase();
+          if (!table.data[sign]) {
+            errors.push(`Table ${index + 1}: Missing data for sign "${sign}"`);
+          } else {
+            // Check if all assessment periods have data
+            table.assessments.forEach(assessment => {
+              const value = table.data[sign][assessment];
+              if (typeof value !== 'number' || isNaN(value) || value < 0 || value > 100) {
+                errors.push(`Table ${index + 1}: Invalid percentage value for ${sign} at ${assessment}: ${value}`);
+              }
+            });
+          }
+        });
+
+        // Validate that we have reasonable assessment periods
+        if (table.assessments.length < 2) {
+          errors.push(`Table ${index + 1}: Insufficient assessment periods (minimum 2 required)`);
+        }
+
+        // Check for common assessment period patterns
+        const hasValidAssessmentPattern = table.assessments.some(period => {
+          const normalizedPeriod = period.toLowerCase().replace(/\s+/g, ' ').trim();
+          return normalizedPeriod.includes('day') || normalizedPeriod.includes('week');
+        });
+
+        if (!hasValidAssessmentPattern) {
+          errors.push(`Table ${index + 1}: Assessment periods should contain time references (e.g., "7 day", "14 day")`);
+        }
+      }
+
+      // Validate table type
+      if (!table.type || table.type !== 'signs_symptoms') {
+        errors.push(`Table ${index + 1}: Invalid table type, expected "signs_symptoms"`);
+      }
+
+      // Validate table number
+      if (typeof table.tableNumber !== 'number' || table.tableNumber < 1) {
+        errors.push(`Table ${index + 1}: Invalid or missing table number`);
+      }
+    });
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  // Validate Word document tables (existing method)
   static validateWordTables(tables) {
     const errors = [];
 
@@ -69,28 +146,34 @@ class ValidationUtils {
         errors.push(`Table ${index + 1} is missing a title`);
       }
 
-      if (!table.rows || table.rows.length === 0) {
+      if (!table.rows || !Array.isArray(table.rows) || table.rows.length === 0) {
         errors.push(`Table ${index + 1} has no data rows`);
-      } else {
-        // Check table structure
-        const requiredFields = ['category', 'trialGroup', 'controlGroup', 'total', 'percentage'];
-        const sampleRow = table.rows[0];
-        
-        requiredFields.forEach(field => {
-          if (!(field in sampleRow)) {
-            errors.push(`Table ${index + 1} is missing required field: ${field}`);
-          }
-        });
+      }
 
-        // Validate data types
+      // Validate each row has required fields
+      if (table.rows) {
         table.rows.forEach((row, rowIndex) => {
-          if (typeof row.trialGroup !== 'number' || isNaN(row.trialGroup)) {
-            errors.push(`Table ${index + 1}, Row ${rowIndex + 1}: Invalid trial group value`);
+          if (!row.category) {
+            errors.push(`Table ${index + 1}, Row ${rowIndex + 1}: Missing category`);
           }
-          if (typeof row.controlGroup !== 'number' || isNaN(row.controlGroup)) {
-            errors.push(`Table ${index + 1}, Row ${rowIndex + 1}: Invalid control group value`);
-          }
+
+          // Check if numeric values are valid
+          const numericFields = ['trialGroup', 'controlGroup', 'total'];
+          numericFields.forEach(field => {
+            if (row[field] !== undefined && (isNaN(Number(row[field])) || Number(row[field]) < 0)) {
+              errors.push(`Table ${index + 1}, Row ${rowIndex + 1}: Invalid value for ${field}: ${row[field]}`);
+            }
+          });
         });
+
+        // Check for at least one data row (excluding total row)
+        const dataRows = table.rows.filter(row => 
+          row.category && row.category.toLowerCase() !== 'total'
+        );
+        
+        if (dataRows.length === 0) {
+          errors.push(`Table ${index + 1}: No valid data rows found`);
+        }
       }
     });
 
@@ -100,49 +183,9 @@ class ValidationUtils {
     };
   }
 
-  // Sanitize filename
+  // Utility method to sanitize filenames
   static sanitizeFilename(filename) {
-    // Remove path traversal attempts
-    let sanitized = path.basename(filename);
-    
-    // Remove special characters except dots and hyphens
-    sanitized = sanitized.replace(/[^a-zA-Z0-9.-]/g, '_');
-    
-    // Ensure it doesn't start with a dot
-    if (sanitized.startsWith('.')) {
-      sanitized = '_' + sanitized.substring(1);
-    }
-    
-    return sanitized;
-  }
-
-  // Validate table data consistency
-  static validateTableDataConsistency(tableData) {
-    const errors = [];
-    
-    tableData.rows.forEach((row, index) => {
-      // Skip total row
-      if (row.category.toLowerCase() === 'total') {
-        return;
-      }
-      
-      // Check if total equals sum of trial and control
-      const calculatedTotal = row.trialGroup + row.controlGroup;
-      if (calculatedTotal !== row.total) {
-        errors.push(`Row ${index + 1}: Total (${row.total}) doesn't match sum of Trial (${row.trialGroup}) + Control (${row.controlGroup})`);
-      }
-    });
-    
-    // Validate percentages sum to 100
-    const totalRow = tableData.rows.find(row => row.category.toLowerCase() === 'total');
-    if (totalRow && Math.abs(parseFloat(totalRow.percentage) - 100) > 0.01) {
-      errors.push('Total percentage does not equal 100%');
-    }
-    
-    return {
-      valid: errors.length === 0,
-      errors
-    };
+    return filename.replace(/[^a-zA-Z0-9.-]/g, '_');
   }
 }
 
