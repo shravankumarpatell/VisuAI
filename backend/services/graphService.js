@@ -384,7 +384,7 @@ class GraphService {
     // Create datasets - exclude control group if it's a single sheet table
     const datasets = [
       { 
-        label: isSingleSheet ? (tableData.sourceInfo?.trialGroup || 'Data Group') : 'Trial Group', 
+        label: isSingleSheet ? (tableData.sourceInfo?.trialGroup || 'Group Data') : 'Trial Group', 
         data: trialData, 
         backgroundColor: palette.trial, 
         borderColor: '#000000ff', 
@@ -420,7 +420,7 @@ class GraphService {
 
     // Adjust title for single sheet
     const graphTitle = isSingleSheet ? 
-      `Graph no ${tableNumber} - Distribution of subjects based on ${tableData.title || ''} (${tableData.sourceInfo?.trialGroup || 'Single Dataset'})` :
+      `Graph no ${tableNumber} - Distribution of subjects based on ${tableData.title || ''}` :
       `Graph no ${tableNumber} - Distribution of subjects based on ${tableData.title || ''}`;
 
     const chart = new Chart(ctx, {
