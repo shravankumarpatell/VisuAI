@@ -20,6 +20,208 @@ class ValidationUtils {
       .substring(0, 255); // Limit length
   }
 
+  // NEW: Validation for Master Chart data
+  static validateMasterChartData(masterChartData) {
+    const errors = [];
+
+    if (!masterChartData || typeof masterChartData !== 'object') {
+      errors.push('Invalid master chart data structure');
+      return { valid: false, errors };
+    }
+
+    // Check basic structure
+    if (!Array.isArray(masterChartData.tables)) {
+      errors.push('Master chart data must contain a tables array');
+      return { valid: false, errors };
+    }
+
+    if (masterChartData.tables.length === 0) {
+      errors.push('No tables found in master chart data');
+      return { valid: false, errors };
+    }
+
+    // Check metadata
+    if (!masterChartData.sourceFile) {
+      errors.push('Missing source file information');
+    }
+
+    if (!masterChartData.totalSheets || masterChartData.totalSheets < 1) {
+      errors.push('Invalid total sheets count');
+    }
+
+    if (!masterChartData.processedSheets || masterChartData.processedSheets < 1) {
+      errors.push('No sheets were successfully processed');
+    }
+
+    // Validate each table
+    masterChartData.tables.forEach((table, index) => {
+      const tableNum = index + 1;
+
+      // Check basic table structure
+      if (!table || typeof table !== 'object') {
+        errors.push(`Table ${tableNum}: Invalid table structure`);
+        return;
+      }
+
+      // Check required fields
+      if (!table.title || typeof table.title !== 'string') {
+        errors.push(`Table ${tableNum}: Missing or invalid title`);
+      }
+
+      if (typeof table.sheetNumber !== 'number' || table.sheetNumber < 1) {
+        errors.push(`Table ${tableNum}: Invalid sheet number`);
+      }
+
+      if (!table.sheetName || typeof table.sheetName !== 'string') {
+        errors.push(`Table ${tableNum}: Missing sheet name`);
+      }
+
+      // Check parameter group structure
+      if (!table.parameterGroup || typeof table.parameterGroup !== 'object') {
+        errors.push(`Table ${tableNum}: Missing parameter group information`);
+        return;
+      }
+
+      const paramGroup = table.parameterGroup;
+      if (!paramGroup.name || typeof paramGroup.name !== 'string') {
+        errors.push(`Table ${tableNum}: Missing parameter name`);
+      }
+
+      if (typeof paramGroup.btIndex !== 'number' || paramGroup.btIndex < 0) {
+        errors.push(`Table ${tableNum}: Invalid BT column index`);
+      }
+
+      if (typeof paramGroup.atIndex !== 'number' || paramGroup.atIndex < 0) {
+        errors.push(`Table ${tableNum}: Invalid AT column index`);
+      }
+
+      if (!paramGroup.btHeader || !paramGroup.atHeader) {
+        errors.push(`Table ${tableNum}: Missing BT/AT column headers`);
+      }
+
+      // Check raw data structure
+      if (!table.rawData || typeof table.rawData !== 'object') {
+        errors.push(`Table ${tableNum}: Missing raw data`);
+        return;
+      }
+
+      const rawData = table.rawData;
+      if (!Array.isArray(rawData.bt) || !Array.isArray(rawData.at)) {
+        errors.push(`Table ${tableNum}: Invalid BT/AT data arrays`);
+        return;
+      }
+
+      if (rawData.bt.length !== rawData.at.length) {
+        errors.push(`Table ${tableNum}: BT and AT arrays must have the same length`);
+      }
+
+      if (rawData.bt.length === 0) {
+        errors.push(`Table ${tableNum}: No valid data points found`);
+      }
+
+      if (typeof rawData.n !== 'number' || rawData.n !== rawData.bt.length) {
+        errors.push(`Table ${tableNum}: Invalid sample size (n)`);
+      }
+
+      // Check minimum sample size for statistical validity
+      if (rawData.n < 3) {
+        errors.push(`Table ${tableNum}: Sample size too small for statistical analysis (minimum 3 required, got ${rawData.n})`);
+      }
+
+      // Validate that BT/AT data contains only numeric values
+      rawData.bt.forEach((value, i) => {
+        if (typeof value !== 'number' || !isFinite(value)) {
+          errors.push(`Table ${tableNum}: Invalid BT value at position ${i + 1}: ${value}`);
+        }
+      });
+
+      rawData.at.forEach((value, i) => {
+        if (typeof value !== 'number' || !isFinite(value)) {
+          errors.push(`Table ${tableNum}: Invalid AT value at position ${i + 1}: ${value}`);
+        }
+      });
+
+      // Check statistics structure
+      if (!table.statistics || typeof table.statistics !== 'object') {
+        errors.push(`Table ${tableNum}: Missing statistics`);
+        return;
+      }
+
+      const stats = table.statistics;
+      
+      // Check required statistical fields
+      const requiredStats = [
+        'n', 'meanBT', 'meanAT', 'meanDiff', 'sdBT', 'sdAT', 'sdDiff',
+        'standardError', 'tValue', 'degreesOfFreedom', 'pValue', 
+        'effectiveness', 'significance'
+      ];
+
+      requiredStats.forEach(field => {
+        if (!(field in stats)) {
+          errors.push(`Table ${tableNum}: Missing statistical field '${field}'`);
+        } else if (field !== 'significance' && (typeof stats[field] !== 'number' || !isFinite(stats[field]))) {
+          errors.push(`Table ${tableNum}: Invalid ${field} value: ${stats[field]}`);
+        }
+      });
+
+      // Validate significance structure
+      if (stats.significance) {
+        if (typeof stats.significance !== 'object') {
+          errors.push(`Table ${tableNum}: Invalid significance structure`);
+        } else {
+          const sig = stats.significance;
+          if (!sig.level || !sig.description || !sig.symbol) {
+            errors.push(`Table ${tableNum}: Incomplete significance information`);
+          }
+
+          // Check valid significance levels
+          const validLevels = ['HS', 'S', 'VS', 'NS'];
+          if (!validLevels.includes(sig.level)) {
+            errors.push(`Table ${tableNum}: Invalid significance level '${sig.level}'`);
+          }
+        }
+      }
+
+      // Validate statistical consistency
+      if (stats.n && rawData.n && stats.n !== rawData.n) {
+        errors.push(`Table ${tableNum}: Inconsistent sample sizes (stats.n=${stats.n}, rawData.n=${rawData.n})`);
+      }
+
+      if (stats.degreesOfFreedom && stats.n && stats.degreesOfFreedom !== stats.n - 1) {
+        errors.push(`Table ${tableNum}: Invalid degrees of freedom (should be n-1 = ${stats.n - 1}, got ${stats.degreesOfFreedom})`);
+      }
+
+      // Check p-value range
+      if (stats.pValue && (stats.pValue < 0 || stats.pValue > 1)) {
+        errors.push(`Table ${tableNum}: Invalid p-value range (${stats.pValue}), should be between 0 and 1`);
+      }
+
+      // Check raw differences array if present
+      if (stats.rawDifferences) {
+        if (!Array.isArray(stats.rawDifferences)) {
+          errors.push(`Table ${tableNum}: Raw differences must be an array`);
+        } else if (stats.rawDifferences.length !== rawData.n) {
+          errors.push(`Table ${tableNum}: Raw differences array length doesn't match sample size`);
+        }
+      }
+    });
+
+    // Check for duplicate parameter names within same sheet
+    const sheetParameterMap = new Map();
+    masterChartData.tables.forEach((table, index) => {
+      const key = `${table.sheetNumber}-${table.parameterGroup.name}`;
+      if (sheetParameterMap.has(key)) {
+        errors.push(`Duplicate parameter '${table.parameterGroup.name}' found in sheet ${table.sheetNumber}`);
+      }
+      sheetParameterMap.set(key, true);
+    });
+
+    return {
+      valid: errors.length === 0,
+      errors: errors
+    };
+  }
+
   // Updated validation for flexible Word tables (both paired and single-sheet scenarios)
   static validateWordTables(tables) {
     const errors = [];

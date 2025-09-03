@@ -63,6 +63,54 @@ function App() {
     }
   };
 
+  // NEW: Master Chart Analysis function
+  const handleMasterChartAnalysis = async () => {
+    if (!file) {
+      setError('Please select a Master Chart Excel file');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await fetch(`${API_URL}/master-chart-analysis`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate Master Chart analysis');
+      }
+
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'master-chart-analysis.docx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setSuccess('Master Chart statistical analysis generated successfully!');
+      setFile(null);
+      document.getElementById('file-input').value = '';
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message || 'Failed to generate Master Chart analysis');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleWordToPdf = async () => {
     if (!file) {
       setError('Please select a Word file');
@@ -110,7 +158,6 @@ function App() {
     }
   };
 
-  // NEW FUNCTION for Signs & Symptoms Analysis
   const handleSignsAnalysis = async () => {
     if (!file) {
       setError('Please select a Word file with Signs & Symptoms data');
@@ -178,6 +225,15 @@ function App() {
         buttonText: 'Generate Word Document',
         handler: handleExcelToWord
       },
+      'master-chart-analysis': {
+        title: 'Master Chart Statistical Analysis',
+        description: 'Upload Excel master chart with BT/AT data to generate comprehensive statistical analysis tables',
+        icon: '📊',
+        fileTypes: '.xlsx,.xls',
+        fileDescription: 'Accepted formats: .xlsx, .xls (Must contain BT/AT columns)',
+        buttonText: 'Generate Statistical Analysis',
+        handler: handleMasterChartAnalysis
+      },
       'word-to-pdf': {
         title: 'Word Tables to PNG Graphs ZIP',
         description: 'Upload Word document with tables to generate individual 3D PNG graphs in ZIP file',
@@ -221,6 +277,17 @@ function App() {
                 <p>Upload Excel master charts to generate formatted tables in Word</p>
               </div>
               
+              {/* NEW: Master Chart Analysis Option */}
+              <div 
+                className="option-card featured"
+                onClick={() => setActiveOption('master-chart-analysis')}
+              >
+                <div className="option-icon">📊</div>
+                <div className="option-badge">NEW</div>
+                <h3>Master Chart Statistical Analysis</h3>
+                <p>Upload Excel master chart with BT/AT data to generate comprehensive statistical analysis with t-tests, p-values, and significance levels</p>
+              </div>
+              
               <div 
                 className="option-card"
                 onClick={() => setActiveOption('word-to-pdf')}
@@ -230,7 +297,6 @@ function App() {
                 <p>Upload Word document with tables to generate individual 3D PNG graphs in ZIP file</p>
               </div>
 
-              {/* NEW OPTION */}
               <div 
                 className="option-card"
                 onClick={() => setActiveOption('signs-analysis')}
@@ -249,6 +315,25 @@ function App() {
             
             <h2>{getOptionConfig(activeOption).title}</h2>
             
+            {activeOption === 'master-chart-analysis' && (
+              <div className="info-panel">
+                <h4>📋 Master Chart Requirements:</h4>
+                <ul>
+                  <li>Excel file with multiple sheets containing patient data</li>
+                  <li>Each sheet should have columns for Before Treatment (BT) and After Treatment (AT) values</li>
+                  <li>Column headers like "Vedana BT", "Vedana AT", "Varna BT", "Varna AT", etc.</li>
+                  <li>Numerical data in BT/AT columns for statistical analysis</li>
+                  <li>System will automatically detect parameter pairs and calculate:</li>
+                  <ul>
+                    <li>Paired t-test statistics</li>
+                    <li>P-values and significance levels</li>
+                    <li>Effectiveness percentages</li>
+                    <li>Mean ± Standard deviation</li>
+                  </ul>
+                </ul>
+              </div>
+            )}
+            
             <div className="upload-area">
               <input
                 id="file-input"
@@ -263,7 +348,10 @@ function App() {
                 <p>
                   {file 
                     ? `Selected: ${file.name}` 
-                    : `Click to select ${activeOption === 'excel-to-word' ? 'Excel' : 'Word'} file`}
+                    : `Click to select ${
+                        activeOption === 'excel-to-word' || activeOption === 'master-chart-analysis' 
+                          ? 'Excel' : 'Word'
+                      } file`}
                 </p>
                 <small>{getOptionConfig(activeOption).fileDescription}</small>
               </label>
@@ -274,6 +362,17 @@ function App() {
                 <div className="error-icon">⚠</div>
                 <div className="error-content">
                   <p className="error-text">{error}</p>
+                  {error.includes('Invalid master chart format') && (
+                    <div className="error-help">
+                      <p><strong>How to fix Master Chart format:</strong></p>
+                      <ol>
+                        <li>Ensure your Excel file has at least one sheet with data</li>
+                        <li>Check that columns are named with BT/AT patterns (e.g., "Vedana BT", "Vedana AT")</li>
+                        <li>Verify that BT/AT columns contain numerical values</li>
+                        <li>Make sure you have at least 3 data rows for statistical validity</li>
+                      </ol>
+                    </div>
+                  )}
                   {error.includes('Trial Group or Control Group') && (
                     <div className="error-help">
                       <p><strong>How to fix:</strong></p>
@@ -378,12 +477,36 @@ function App() {
           transition: all 0.3s ease;
           box-shadow: 0 2px 8px rgba(0,0,0,0.1);
           border: 2px solid transparent;
+          position: relative;
         }
 
         .option-card:hover {
           transform: translateY(-5px);
           box-shadow: 0 8px 20px rgba(0,0,0,0.15);
           border-color: #667eea;
+        }
+
+        .option-card.featured {
+          border-color: #4CAF50;
+          box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
+        }
+
+        .option-card.featured:hover {
+          border-color: #45a049;
+          box-shadow: 0 8px 20px rgba(76, 175, 80, 0.3);
+        }
+
+        .option-badge {
+          position: absolute;
+          top: -10px;
+          right: -10px;
+          background: #4CAF50;
+          color: white;
+          padding: 0.25rem 0.75rem;
+          border-radius: 12px;
+          font-size: 0.75rem;
+          font-weight: bold;
+          transform: rotate(15deg);
         }
 
         .option-icon {
@@ -408,8 +531,37 @@ function App() {
           border-radius: 12px;
           padding: 2rem;
           box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-          max-width: 600px;
+          max-width: 700px;
           margin: 0 auto;
+        }
+
+        .info-panel {
+          background: #f0f8ff;
+          border: 1px solid #b3d9ff;
+          border-radius: 8px;
+          padding: 1.5rem;
+          margin: 1.5rem 0;
+        }
+
+        .info-panel h4 {
+          margin: 0 0 1rem;
+          color: #0066cc;
+          font-size: 1.1rem;
+        }
+
+        .info-panel ul {
+          margin: 0;
+          padding-left: 1.5rem;
+          color: #333;
+        }
+
+        .info-panel li {
+          margin: 0.5rem 0;
+          line-height: 1.4;
+        }
+
+        .info-panel ul ul {
+          margin-top: 0.25rem;
         }
 
         .back-button {
@@ -606,6 +758,11 @@ function App() {
           
           .file-label {
             padding: 2rem;
+          }
+
+          .info-panel {
+            padding: 1rem;
+            margin: 1rem 0;
           }
         }
       `}</style>

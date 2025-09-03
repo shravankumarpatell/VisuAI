@@ -9,7 +9,12 @@ require('dotenv').config();
 const excelService = require('./services/excelService');
 const wordService = require('./services/wordService');
 const wordParserService = require('./services/wordParserService');
-const signsParserService = require('./services/signsParserService'); // NEW
+const signsParserService = require('./services/signsParserService');
+const masterChartService = require('./services/masterChartService'); // NEW
+if (!masterChartService || typeof masterChartService.processMasterChart !== 'function') {
+  console.error('ERROR: services/masterChartService does not export processMasterChart(). Check services/masterChartService.js export.');
+  throw new Error('masterChartService.processMasterChart is not available');
+}
 const graphService = require('./services/graphService');
 const pdfService = require('./services/pdfService');
 const zipService = require('./services/zipService');
@@ -71,12 +76,14 @@ const upload = multer({
     const allowedTypes = {
       'excel-to-word': ['.xlsx', '.xls'],
       'word-to-pdf': ['.docx', '.doc'],
-      'signs-analysis': ['.docx', '.doc'] // NEW
+      'signs-analysis': ['.docx', '.doc'],
+      'master-chart-analysis': ['.xlsx', '.xls'] // NEW
     };
     
     let route = 'word-to-pdf'; // default
     if (req.path.includes('excel-to-word')) route = 'excel-to-word';
-    else if (req.path.includes('signs-analysis')) route = 'signs-analysis'; // NEW
+    else if (req.path.includes('signs-analysis')) route = 'signs-analysis';
+    else if (req.path.includes('master-chart-analysis')) route = 'master-chart-analysis'; // NEW
     
     const ext = path.extname(file.originalname).toLowerCase();
     
@@ -87,6 +94,62 @@ const upload = multer({
     }
   }
 });
+
+// NEW ROUTE: Master Chart Analysis
+app.post('/api/master-chart-analysis', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError('No file uploaded', 400);
+  }
+
+  console.log('Processing Master Chart Excel file:', req.file.filename);
+
+  try {
+    // Validate file size
+    if (!ValidationUtils.validateFileSize(req.file.size, parseInt(process.env.MAX_FILE_SIZE_MB) || 10)) {
+      throw new AppError('File size exceeds limit', 400);
+    }
+
+    // Process Master Chart Excel file
+    const masterChartData = await masterChartService.processMasterChart(req.file.path);
+    
+    // Validate master chart data (best-effort: if validation fails we proceed but log warnings)
+    let validation = { valid: true, errors: [] };
+    try {
+      if (ValidationUtils && typeof ValidationUtils.validateMasterChartData === 'function') {
+        validation = ValidationUtils.validateMasterChartData(masterChartData);
+      }
+    } catch (valErr) {
+      console.warn('Master chart validation threw an exception, continuing with best-effort processing:', valErr && valErr.message ? valErr.message : valErr);
+      validation = { valid: false, errors: [String(valErr)] };
+    }
+    
+    if (!validation.valid) {
+      // Log validation errors but proceed — this allows generating output for slightly non-standard master charts.
+      console.warn('Master chart validation failed with errors:', validation.errors);
+    }
+    
+    // Generate Word document with complete statistical tables
+    const wordFilePath = await wordService.generateMasterChartWordDocument(masterChartData, req.file.filename);
+    
+    // Send file
+    res.download(wordFilePath, 'master-chart-analysis.docx', async (err) => {
+      if (err) {
+        console.error('Error sending file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, error: 'Error downloading file' });
+        }
+      }
+      
+      // Cleanup
+      await cleanup.cleanupFiles([req.file.path, wordFilePath]);
+    });
+
+  } catch (error) {
+    // Cleanup on error
+    await cleanup.cleanupFiles([req.file.path]);
+    throw error;
+  }
+}));
 
 // Existing routes
 app.post('/api/excel-to-word', upload.single('file'), asyncHandler(async (req, res) => {
@@ -171,19 +234,19 @@ app.post('/api/word-to-pdf', upload.single('file'), asyncHandler(async (req, res
       }
       
       // Cleanup all generated files
-      const filesToClean = [req.file.path, zipFilePath, ...graphFiles];
+      const filesToClean = [req.file.path, zipFilePath, graphFiles];
       await cleanup.cleanupFiles(filesToClean);
     });
 
   } catch (error) {
     // Cleanup on error
-    const filesToClean = [req.file.path, ...graphFiles];
+    const filesToClean = [req.file.path, graphFiles];
     await cleanup.cleanupFiles(filesToClean);
     throw error;
   }
 }));
 
-// CORRECTED ROUTE: Signs & Symptoms Analysis
+// Signs & Symptoms Analysis
 app.post('/api/signs-analysis', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -202,7 +265,7 @@ app.post('/api/signs-analysis', upload.single('file'), asyncHandler(async (req, 
     // Parse Signs & Symptoms document
     const tables = await signsParserService.parseSignsDocument(req.file.path);
     
-    // Validate signs data using ValidationUtils (CORRECTED)
+    // Validate signs data using ValidationUtils
     const validation = ValidationUtils.validateSignsDocument(tables);
     if (!validation.valid) {
       throw new AppError(`Invalid Signs document format: ${validation.errors.join(', ')}`, 422);
@@ -212,7 +275,7 @@ app.post('/api/signs-analysis', upload.single('file'), asyncHandler(async (req, 
     const graphs = await graphService.generateSignsGraphs(tables);
     graphs.forEach(g => graphFiles.push(g.imagePath));
     
-    // Create ZIP archive with individual PNG graphs (CORRECTED: 'signs' type)
+    // Create ZIP archive with individual PNG graphs
     const zipFilePath = await zipService.createZipArchive(graphs, req.file.filename, 'signs');
     
     console.log('Signs analysis ZIP file created:', zipFilePath);
@@ -227,13 +290,13 @@ app.post('/api/signs-analysis', upload.single('file'), asyncHandler(async (req, 
       }
       
       // Cleanup all generated files
-      const filesToClean = [req.file.path, zipFilePath, ...graphFiles];
+      const filesToClean = [req.file.path, zipFilePath, graphFiles];
       await cleanup.cleanupFiles(filesToClean);
     });
 
   } catch (error) {
     // Cleanup on error
-    const filesToClean = [req.file.path, ...graphFiles];
+    const filesToClean = [req.file.path, graphFiles];
     await cleanup.cleanupFiles(filesToClean);
     
     // Check for specific error types and provide appropriate messages
@@ -271,7 +334,7 @@ app.get('/api/admin/cleanup', asyncHandler(async (req, res) => {
 app.get('/api/admin/stats', asyncHandler(async (req, res) => {
   const dirSize = await cleanup.getDirectorySize();
   res.json({ 
-    success: true,
+    success: true, 
     uploadDirectory: dirSize
   });
 }));
@@ -306,3 +369,6 @@ const server = app.listen(PORT, () => {
   console.log(`Upload directory: ${process.env.UPLOAD_DIR || 'uploads'}`);
   console.log(`Max file size: ${process.env.MAX_FILE_SIZE_MB || 10}MB`);
 });
+
+
+module.exports = app;
