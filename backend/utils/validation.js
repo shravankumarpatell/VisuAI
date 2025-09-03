@@ -20,6 +20,184 @@ class ValidationUtils {
       .substring(0, 255); // Limit length
   }
 
+  // NEW: Validation for Improvement Document data
+  static validateImprovementDocument(improvementData) {
+    const errors = [];
+
+    if (!improvementData || typeof improvementData !== 'object') {
+      errors.push('Invalid improvement document data structure');
+      return { valid: false, errors };
+    }
+
+    // Check basic structure
+    if (!Array.isArray(improvementData.categories)) {
+      errors.push('Improvement data must contain a categories array');
+      return { valid: false, errors };
+    }
+
+    if (!Array.isArray(improvementData.timePeriods)) {
+      errors.push('Improvement data must contain a timePeriods array');
+      return { valid: false, errors };
+    }
+
+    if (!improvementData.groupA || typeof improvementData.groupA !== 'object') {
+      errors.push('Improvement data must contain Group A data');
+      return { valid: false, errors };
+    }
+
+    if (!improvementData.groupB || typeof improvementData.groupB !== 'object') {
+      errors.push('Improvement data must contain Group B data');
+      return { valid: false, errors };
+    }
+
+    // Validate categories array
+    if (improvementData.categories.length === 0) {
+      errors.push('No improvement categories found');
+      return { valid: false, errors };
+    }
+
+    // Expected improvement categories
+    const expectedCategories = [
+      'Cured(100%)',
+      'Marked improved(75-100%)',
+      'Moderate improved(50-75%)',
+      'Mild improved(25-50%)',
+      'Not cured(<25%)'
+    ];
+
+    // Check if categories are reasonable (allow some flexibility)
+    const hasValidCategories = improvementData.categories.some(cat => 
+      expectedCategories.some(expected => 
+        cat.toLowerCase().includes(expected.toLowerCase().split('(')[0]) ||
+        expected.toLowerCase().includes(cat.toLowerCase().split('(')[0])
+      )
+    );
+
+    if (!hasValidCategories) {
+      errors.push('No recognizable improvement categories found. Expected categories like: Cured, Marked improved, Moderate improved, Mild improved, Not cured');
+    }
+
+    // Validate time periods array
+    if (improvementData.timePeriods.length === 0) {
+      errors.push('No time periods found');
+      return { valid: false, errors };
+    }
+
+    // Expected time periods (allow flexibility)
+    const expectedTimePeriods = ['7th', '14th', '21st', '28th'];
+    const hasValidTimePeriods = improvementData.timePeriods.some(period => 
+      expectedTimePeriods.some(expected => 
+        period.toString().includes(expected.replace('th', '')) ||
+        period.toString().includes(expected)
+      )
+    );
+
+    if (!hasValidTimePeriods) {
+      errors.push('No recognizable time periods found. Expected periods like: 7th, 14th, 21st, 28th day');
+    }
+
+    // Validate Group A data structure
+    improvementData.timePeriods.forEach(period => {
+      if (!improvementData.groupA[period]) {
+        errors.push(`Missing Group A data for time period: ${period}`);
+        return;
+      }
+
+      improvementData.categories.forEach(category => {
+        const categoryData = improvementData.groupA[period][category];
+        
+        if (!categoryData) {
+          errors.push(`Missing Group A data for category '${category}' at time period '${period}'`);
+        } else {
+          // Validate count and percentage structure
+          if (typeof categoryData.count !== 'number' || categoryData.count < 0) {
+            errors.push(`Invalid count value for Group A '${category}' at '${period}': ${categoryData.count}`);
+          }
+
+          if (typeof categoryData.percentage !== 'number' || categoryData.percentage < 0 || categoryData.percentage > 100) {
+            errors.push(`Invalid percentage value for Group A '${category}' at '${period}': ${categoryData.percentage}`);
+          }
+        }
+      });
+    });
+
+    // Validate Group B data structure
+    improvementData.timePeriods.forEach(period => {
+      if (!improvementData.groupB[period]) {
+        errors.push(`Missing Group B data for time period: ${period}`);
+        return;
+      }
+
+      improvementData.categories.forEach(category => {
+        const categoryData = improvementData.groupB[period][category];
+        
+        if (!categoryData) {
+          errors.push(`Missing Group B data for category '${category}' at time period '${period}'`);
+        } else {
+          // Validate count and percentage structure
+          if (typeof categoryData.count !== 'number' || categoryData.count < 0) {
+            errors.push(`Invalid count value for Group B '${category}' at '${period}': ${categoryData.count}`);
+          }
+
+          if (typeof categoryData.percentage !== 'number' || categoryData.percentage < 0 || categoryData.percentage > 100) {
+            errors.push(`Invalid percentage value for Group B '${category}' at '${period}': ${categoryData.percentage}`);
+          }
+        }
+      });
+    });
+
+    // Validate data consistency within each group and time period
+    improvementData.timePeriods.forEach(period => {
+      // Check Group A totals
+      let groupATotal = 0;
+      improvementData.categories.forEach(category => {
+        if (improvementData.groupA[period] && improvementData.groupA[period][category]) {
+          groupATotal += improvementData.groupA[period][category].count;
+        }
+      });
+
+      // Check Group B totals
+      let groupBTotal = 0;
+      improvementData.categories.forEach(category => {
+        if (improvementData.groupB[period] && improvementData.groupB[period][category]) {
+          groupBTotal += improvementData.groupB[period][category].count;
+        }
+      });
+
+      // Warn if totals seem inconsistent (but don't fail validation)
+      if (groupATotal === 0 && groupBTotal === 0) {
+        console.warn(`Warning: No data found for time period '${period}'`);
+      }
+
+      // Check for reasonable sample sizes (warn, don't fail)
+      if (groupATotal > 100 || groupBTotal > 100) {
+        console.warn(`Warning: Large sample size detected at '${period}' (Group A: ${groupATotal}, Group B: ${groupBTotal})`);
+      }
+    });
+
+    // Validate minimum data requirements
+    let hasAnyData = false;
+    improvementData.timePeriods.forEach(period => {
+      improvementData.categories.forEach(category => {
+        const groupAData = improvementData.groupA[period] && improvementData.groupA[period][category];
+        const groupBData = improvementData.groupB[period] && improvementData.groupB[period][category];
+        
+        if ((groupAData && groupAData.count > 0) || (groupBData && groupBData.count > 0)) {
+          hasAnyData = true;
+        }
+      });
+    });
+
+    if (!hasAnyData) {
+      errors.push('No improvement data found. All counts appear to be zero or missing.');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors
+    };
+  }
+
   // NEW: Validation for Master Chart data
   static validateMasterChartData(masterChartData) {
     const errors = [];

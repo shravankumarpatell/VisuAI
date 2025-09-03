@@ -205,6 +205,54 @@ function App() {
     }
   };
 
+  // NEW: Improvement Analysis function
+  const handleImprovementAnalysis = async () => {
+    if (!file) {
+      setError('Please select a Word file with improvement percentage table');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await fetch(`${API_URL}/improvement-analysis`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate improvement analysis graph');
+      }
+
+      const blob = await response.blob();
+      
+      // Create download link for PNG file
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'improvement-analysis-graph.png');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setSuccess('Improvement analysis graph generated successfully!');
+      setFile(null);
+      document.getElementById('file-input').value = '';
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message || 'Failed to generate improvement analysis graph');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetSelection = () => {
     setActiveOption(null);
     setFile(null);
@@ -251,6 +299,15 @@ function App() {
         fileDescription: 'Accepted formats: .docx, .doc',
         buttonText: 'Generate Signs Analysis Graphs',
         handler: handleSignsAnalysis
+      },
+      'improvement-analysis': {
+        title: 'Improvement Analysis Graph',
+        description: 'Upload Word document with improvement percentage table to generate 3D visualization graph',
+        icon: '📈',
+        fileTypes: '.docx,.doc',
+        fileDescription: 'Accepted formats: .docx, .doc (Must contain improvement percentage table)',
+        buttonText: 'Generate Improvement Graph',
+        handler: handleImprovementAnalysis
       }
     };
     return configs[option];
@@ -277,13 +334,12 @@ function App() {
                 <p>Upload Excel master charts to generate formatted tables in Word</p>
               </div>
               
-              {/* NEW: Master Chart Analysis Option */}
+              {/* Master Chart Analysis Option */}
               <div 
-                className="option-card featured"
+                className="option-card"
                 onClick={() => setActiveOption('master-chart-analysis')}
               >
                 <div className="option-icon">📊</div>
-                <div className="option-badge">NEW</div>
                 <h3>Master Chart Statistical Analysis</h3>
                 <p>Upload Excel master chart with BT/AT data to generate comprehensive statistical analysis with t-tests, p-values, and significance levels</p>
               </div>
@@ -304,6 +360,17 @@ function App() {
                 <div className="option-icon">🔬</div>
                 <h3>Signs & Symptoms Analysis</h3>
                 <p>Upload Word document with Signs & Symptoms tables to generate percentage-based assessment graphs</p>
+              </div>
+
+              {/* NEW: Improvement Analysis Option */}
+              <div 
+                className="option-card featured"
+                onClick={() => setActiveOption('improvement-analysis')}
+              >
+                <div className="option-icon">📈</div>
+                <div className="option-badge">NEW</div>
+                <h3>Improvement Analysis Graph</h3>
+                <p>Upload Word document with improvement percentage table to generate 3D bar chart visualization</p>
               </div>
             </div>
           </div>
@@ -334,6 +401,25 @@ function App() {
               </div>
             )}
             
+            {activeOption === 'improvement-analysis' && (
+              <div className="info-panel">
+                <h4>📋 Improvement Analysis Requirements:</h4>
+                <ul>
+                  <li>Word document with a single improvement percentage table</li>
+                  <li>Table should have improvement categories (rows): Cured(100%), Marked improved(75-100%), etc.</li>
+                  <li>Columns should show Group A and Group B data for different time periods (7th day, 14th day, 21st day, 28th day)</li>
+                  <li>Data format: count (percentage%) - e.g., "8 (40%)"</li>
+                  <li>System will generate a 3D bar chart visualization showing:</li>
+                  <ul>
+                    <li>Improvement categories on X-axis</li>
+                    <li>Patient count on Y-axis</li>
+                    <li>Different colored bars for each time period</li>
+                    <li>Separate grouping for Group A and Group B</li>
+                  </ul>
+                </ul>
+              </div>
+            )}
+            
             <div className="upload-area">
               <input
                 id="file-input"
@@ -359,7 +445,7 @@ function App() {
 
             {error && (
               <div className="message error-message">
-                <div className="error-icon">⚠</div>
+                <div className="error-icon">⚠️</div>
                 <div className="error-content">
                   <p className="error-text">{error}</p>
                   {error.includes('Invalid master chart format') && (
@@ -383,6 +469,17 @@ function App() {
                         <li>Save and try again</li>
                       </ol>
                       <p className="error-tip">💡 Tip: The system now also accepts any Excel with at least 2 sheets, using them as Trial and Control groups automatically.</p>
+                    </div>
+                  )}
+                  {error.includes('improvement percentage table') && (
+                    <div className="error-help">
+                      <p><strong>How to fix Improvement Analysis format:</strong></p>
+                      <ol>
+                        <li>Ensure your Word file contains a single table with improvement data</li>
+                        <li>Check that the table has improvement categories as row headers</li>
+                        <li>Verify columns for Group A and Group B with time periods (7th, 14th, 21st, 28th day)</li>
+                        <li>Data should be in format: "count (percentage%)" - e.g., "8 (40%)"</li>
+                      </ol>
                     </div>
                   )}
                 </div>

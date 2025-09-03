@@ -65,6 +65,320 @@ class GraphService {
     return graphs;
   }
 
+  // NEW METHOD: Generate Improvement Analysis Graph
+  async generateImprovementGraph(improvementData) {
+    if (!improvementData || !improvementData.categories || !improvementData.timePeriods) {
+      throw new Error('Invalid improvement data structure');
+    }
+
+    console.log('Generating improvement analysis graph with data:', {
+      categories: improvementData.categories.length,
+      timePeriods: improvementData.timePeriods.length,
+      hasGroupA: !!improvementData.groupA,
+      hasGroupB: !!improvementData.groupB
+    });
+
+    const imagePath = await this.createImprovementAnalysisChart(improvementData);
+    return imagePath;
+  }
+
+  // NEW METHOD: Create Improvement Analysis 3D Chart
+// NEW METHOD: Create Improvement Analysis 3D Chart (Updated with Python logic)
+// NEW METHOD: Create Improvement Analysis 3D Chart (Updated with Python logic)
+async createImprovementAnalysisChart(improvementData) {
+  const width = 3200;  // Increased from 2400 to 3200
+  const height = 1500;
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  const categories = improvementData.categories;
+  const timePeriods = improvementData.timePeriods;
+  const groupA = improvementData.groupA;
+  const groupB = improvementData.groupB;
+
+  console.log('Creating improvement chart with data:', {
+    categories: categories.length,
+    timePeriods: timePeriods.length,
+    groupAData: Object.keys(groupA),
+    groupBData: Object.keys(groupB)
+  });
+
+  // Define chart area (matching Python margins)
+  const marginLeft = 160;
+  const marginRight = 600;  // Increased from 420 to 600 for legend space
+  const marginTop = 120;
+  const marginBottom = 220;
+  
+  const chartLeft = marginLeft;
+  const chartRight = width - marginRight;
+  const chartTop = marginTop;
+  const chartBottom = height - marginBottom;
+
+  // 3D effect parameters (matching Python)
+  const dx = Math.max(8, Math.round((chartRight - chartLeft) * 0.01));
+  const dy = Math.max(6, Math.round(dx * 0.45));
+  const platformDx = Math.round(dx * 7);
+  const platformDy = Math.round(dy * 6);
+
+  // Calculate maximum value for scaling
+  let maxTotal = 0;
+  timePeriods.forEach(period => {
+    categories.forEach(category => {
+      const groupACount = groupA[period] && groupA[period][category] ? groupA[period][category].count : 0;
+      const groupBCount = groupB[period] && groupB[period][category] ? groupB[period][category].count : 0;
+      maxTotal = Math.max(maxTotal, groupACount, groupBCount);
+    });
+  });
+  
+  const yMax = Math.max(5, Math.ceil(maxTotal / 5) * 5);
+
+  // Clear canvas with white background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  // Draw platform base
+  ctx.save();
+  ctx.fillStyle = '#9aa0a6';
+  ctx.strokeStyle = '#4b4f52';
+  ctx.lineWidth = 2.2;
+
+  const leftX = chartLeft - dx - 6;
+  const rightX = chartRight + 6;
+  
+  ctx.beginPath();
+  ctx.moveTo(leftX, chartBottom);
+  ctx.lineTo(rightX, chartBottom);
+  ctx.lineTo(rightX + platformDx, chartBottom - platformDy);
+  ctx.lineTo(leftX + platformDx, chartBottom - platformDy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Platform highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(leftX + 6, chartBottom - 2);
+  ctx.lineTo(rightX - 6, chartBottom - 2);
+  ctx.lineTo(rightX - 6 + platformDx, chartBottom - platformDy - 2);
+  ctx.lineTo(leftX + 6 + platformDx, chartBottom - platformDy - 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Draw Y-axis grid lines and labels
+  const numSteps = 5;
+  ctx.font = '600 24px "Helvetica Neue", Arial';
+  ctx.fillStyle = '#111827';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i <= numSteps; i++) {
+    const yVal = (yMax / numSteps) * i;
+    const yPixel = chartBottom - (yVal / yMax) * (chartBottom - chartTop);
+    
+    // Grid line
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    ctx.moveTo(chartLeft, yPixel);
+    ctx.lineTo(chartRight, yPixel);
+    ctx.stroke();
+    
+    // Y-axis label
+    ctx.fillText(Math.round(yVal).toString(), chartLeft - 12, yPixel);
+  }
+
+  // Layout calculations (matching Python logic)
+  const barsPerTimepoint = categories.length; // 5 categories
+  const timepointsPerGroup = timePeriods.length; // 4 timepoints
+  const groupGap = 0.08 * (chartRight - chartLeft);
+  const availableWidth = chartRight - chartLeft - groupGap;
+  const groupSlot = availableWidth / 2; // 2 groups
+  const timepointSlot = groupSlot / timepointsPerGroup;
+  const catPadding = 0.06 * timepointSlot;
+  const usableTimepointWidth = timepointSlot - 2 * catPadding;
+  const barWidth = (usableTimepointWidth / barsPerTimepoint) * 0.78;
+  const barGap = barsPerTimepoint > 1 ? 
+    (usableTimepointWidth - barsPerTimepoint * barWidth) / (barsPerTimepoint - 1) : 0;
+
+  // Category colors (matching Python)
+  const categoryColors = [
+    'rgb(110, 188, 96)',    // Cured - Green
+    'rgb(245, 158, 11)',    // Marked improved - Orange  
+    'rgb(239, 68, 68)',     // Moderate improved - Red
+    'rgb(139, 92, 246)',    // Mild improved - Purple
+    'rgb(239, 230, 178)'    // Not cured - Light yellow
+  ];
+
+  // Calculate bar positions and draw bars
+  const groups = ['Group A', 'Group B'];
+  const zeroVisualPx = 6;
+
+  groups.forEach((groupName, groupIndex) => {
+    const groupData = groupIndex === 0 ? groupA : groupB;
+    const groupStart = chartLeft + groupIndex * (groupSlot + groupGap);
+    
+    timePeriods.forEach((timepoint, timepointIndex) => {
+      const timepointStart = groupStart + timepointIndex * timepointSlot + catPadding;
+      
+      categories.forEach((category, categoryIndex) => {
+        const barLeft = timepointStart + categoryIndex * (barWidth + barGap);
+        const barRight = barLeft + barWidth;
+        const barCenterX = barLeft + barWidth / 2;
+        
+        // Get data value
+        const dataValue = groupData[timepoint] && groupData[timepoint][category] ? 
+          groupData[timepoint][category].count : 0;
+        
+        const segmentHeight = dataValue > 0 ? 
+          (dataValue / yMax) * (chartBottom - chartTop) : zeroVisualPx;
+        
+        const currentTop = chartBottom - segmentHeight;
+        
+        // Draw 3D bar
+        const baseColor = categoryColors[categoryIndex];
+        
+        // Front face
+        ctx.fillStyle = baseColor;
+        ctx.fillRect(barLeft, currentTop, barWidth, segmentHeight);
+        
+        // Top face
+        ctx.beginPath();
+        ctx.moveTo(barLeft, currentTop);
+        ctx.lineTo(barRight, currentTop);
+        ctx.lineTo(barRight + dx, currentTop - dy);
+        ctx.lineTo(barLeft + dx, currentTop - dy);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Right side face
+        ctx.beginPath();
+        ctx.moveTo(barRight, currentTop);
+        ctx.lineTo(barRight + dx, currentTop - dy);
+        ctx.lineTo(barRight + dx, chartBottom - dy);
+        ctx.lineTo(barRight, chartBottom);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Outlines
+        ctx.strokeStyle = '#111827';
+        ctx.lineWidth = 2;
+        
+        // Front face outline
+        ctx.strokeRect(barLeft, currentTop, barWidth, segmentHeight);
+        
+        // Top face outline
+        ctx.beginPath();
+        ctx.moveTo(barLeft, currentTop);
+        ctx.lineTo(barRight, currentTop);
+        ctx.lineTo(barRight + dx, currentTop - dy);
+        ctx.lineTo(barLeft + dx, currentTop - dy);
+        ctx.closePath();
+        ctx.stroke();
+        
+        // Right side outline
+        ctx.beginPath();
+        ctx.moveTo(barRight, currentTop);
+        ctx.lineTo(barRight + dx, currentTop - dy);
+        ctx.lineTo(barRight + dx, chartBottom - dy);
+        ctx.lineTo(barRight, chartBottom);
+        ctx.closePath();
+        ctx.stroke();
+        
+        // Value label on top of bar
+        if (dataValue > 0) {
+          ctx.font = '700 22px "Helvetica Neue", Arial';
+          ctx.fillStyle = '#111827';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          const labelX = barCenterX + dx / 2;
+          const labelY = currentTop - dy - 6;
+          ctx.fillText(dataValue.toString(), labelX, labelY);
+        }
+      });
+    });
+  });
+
+  // X-axis timepoint labels
+  ctx.font = '700 30px "Helvetica Neue", Arial';
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  groups.forEach((groupName, groupIndex) => {
+    const groupStart = chartLeft + groupIndex * (groupSlot + groupGap);
+    
+    timePeriods.forEach((timepoint, timepointIndex) => {
+      const timepointCenter = groupStart + timepointIndex * timepointSlot + timepointSlot / 2;
+      ctx.fillText(timepoint, timepointCenter, chartBottom + 18);
+    });
+  });
+
+  // Group labels
+  ctx.font = '700 30px "Helvetica Neue", Arial';
+  ctx.fillStyle = '#111827';
+  const groupACenterX = chartLeft + groupSlot / 2;
+  const groupBCenterX = chartLeft + groupSlot + groupGap + groupSlot / 2;
+  
+  ctx.fillText('Group A', groupACenterX, chartBottom + 68);
+  ctx.fillText('Group B', groupBCenterX, chartBottom + 68);
+
+  // Title
+  ctx.font = '700 48px "Helvetica Neue", Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#111827';
+  const titleX = chartLeft + (chartRight - chartLeft) / 2;
+  ctx.fillText('Improvement Analysis - Group A vs Group B Comparison', titleX, 40);
+
+  // Legend
+  const legendX = chartRight + 40;
+  const legendY = chartTop + 20;
+  const boxSize = 36;
+  
+  ctx.font = '600 28px "Helvetica Neue", Arial';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  
+  categories.forEach((category, index) => {
+    const y = legendY + index * 70;
+    
+    // Legend color box
+    ctx.fillStyle = categoryColors[index];
+    ctx.fillRect(legendX, y, boxSize, boxSize);
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(legendX, y, boxSize, boxSize);
+    
+    // Legend text
+    ctx.fillStyle = '#111827';
+    ctx.fillText(category, legendX + boxSize + 18, y + boxSize / 2);
+  });
+
+  // Y-axis title (rotated)
+  ctx.save();
+  ctx.translate(chartLeft - 120, chartTop + (chartBottom - chartTop) / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.font = '800 26px "Helvetica Neue", Arial';
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Number of Patients', 0, 0);
+  ctx.restore();
+
+  // Save the chart
+  await this.ensureUploadDir();
+  const filename = `improvement-analysis-${Date.now()}.png`;
+  const filepath = path.join(UPLOAD_DIR, filename);
+  const buffer = canvas.toBuffer('image/png');
+  await fs.writeFile(filepath, buffer);
+
+  console.log('Improved improvement analysis graph created:', filepath);
+  return filepath;
+}
+
   // NEW METHOD: Create Signs & Symptoms Assessment Chart
   async createSignsAssessmentChart(tableData, tableNumber) {
     const width = 2400;

@@ -37,11 +37,27 @@ class WordService {
     }
   }
 
-  // NEW: Generate Master Chart Word Document with statistical tables
+  // ENHANCED: Generate Master Chart Word Document with statistical tables AND improvement percentage table AND unpaired t-test table
   async generateMasterChartWordDocument(masterChartData, originalFilename) {
     try {
       console.log('Generating Master Chart Word document...');
-      console.log(`Number of statistical tables to create: ${masterChartData.tables ? masterChartData.tables.length : 0}`);
+      console.log(`Number of tables to create: ${masterChartData.tables ? masterChartData.tables.length : 0}`);
+      
+      // Check if we have improvement analysis data
+      const hasImprovementAnalysis = masterChartData.hasImprovementAnalysis || 
+        masterChartData.tables.some(table => table.type === 'improvement_percentage');
+      
+      // Check if we have unpaired t-test data
+      const hasUnpairedTTest = masterChartData.hasUnpairedTTest || 
+        masterChartData.tables.some(table => table.type === 'unpaired_ttest');
+      
+      if (hasImprovementAnalysis) {
+        console.log('✅ Improvement percentage analysis detected - will generate additional table');
+      }
+      
+      if (hasUnpairedTTest) {
+        console.log('✅ Unpaired t-test analysis detected - will generate additional table');
+      }
       
       const doc = new Document({
         sections: [{
@@ -102,32 +118,44 @@ class WordService {
     }
 
     // Add processing summary
+    const statisticalTables = masterChartData.tables.filter(t => t.type === 'statistical_analysis');
+    const improvementTables = masterChartData.tables.filter(t => t.type === 'improvement_percentage');
+    const unpairedTTestTables = masterChartData.tables.filter(t => t.type === 'unpaired_ttest');
+    
     content.push(
       new Paragraph({
         children: [
           new TextRun({ 
-            text: `Processed ${masterChartData.processedSheets} of ${masterChartData.totalSheets} sheets • Generated ${masterChartData.tables.length} statistical tables`,
+            text: `Processed ${masterChartData.processedSheets} of ${masterChartData.totalSheets} sheets • Generated ${statisticalTables.length} statistical tables`,
             italic: true
-          })
+          }),
+          ...(improvementTables.length > 0 ? [
+            new TextRun({ text: " • ", italic: true }),
+            new TextRun({ text: `${improvementTables.length} improvement percentage analysis table`, italic: true })
+          ] : []),
+          ...(unpairedTTestTables.length > 0 ? [
+            new TextRun({ text: " • ", italic: true }),
+            new TextRun({ text: `${unpairedTTestTables.length} unpaired t-test comparison table`, italic: true })
+          ] : [])
         ],
         alignment: AlignmentType.CENTER,
         spacing: { after: 400 }
       })
     );
 
-    // Group tables by sheet for better organization
-    const tablesBySheet = {};
-    masterChartData.tables.forEach((table, index) => {
+    // First, create statistical analysis tables (existing functionality - paired t-test)
+    const statisticalTablesBySheet = {};
+    statisticalTables.forEach((table, index) => {
       table.tableNumber = (index + 27); // keep starting table numbering at 27 as before
-      if (!tablesBySheet[table.sheetNumber]) {
-        tablesBySheet[table.sheetNumber] = [];
+      if (!statisticalTablesBySheet[table.sheetNumber]) {
+        statisticalTablesBySheet[table.sheetNumber] = [];
       }
-      tablesBySheet[table.sheetNumber].push(table);
+      statisticalTablesBySheet[table.sheetNumber].push(table);
     });
 
-    // Create tables for each sheet
-    Object.keys(tablesBySheet).sort((a, b) => parseInt(a) - parseInt(b)).forEach(sheetNumber => {
-      const sheetTables = tablesBySheet[sheetNumber];
+    // Create statistical tables for each sheet
+    Object.keys(statisticalTablesBySheet).sort((a, b) => parseInt(a) - parseInt(b)).forEach(sheetNumber => {
+      const sheetTables = statisticalTablesBySheet[sheetNumber];
       
       // Add sheet section header
       content.push(
@@ -181,6 +209,95 @@ class WordService {
       });
     });
 
+    // NEW: Add unpaired t-test comparison table if available
+    const unpairedTable = unpairedTTestTables[0];
+    if (unpairedTable) {
+      content.push(
+        new Paragraph({
+          text: "Trial vs Control Group Comparison",
+          heading: HeadingLevel.HEADING_2,
+          spacing: {
+            before: 800,
+            after: 300
+          }
+        })
+      );
+
+      // Add unpaired t-test table title
+      content.push(
+        new Paragraph({
+          children: [
+            new TextRun({ 
+              text: `Table no-${statisticalTables.length + 27}: ${unpairedTable.title}`, 
+              bold: true 
+            })
+          ],
+          spacing: {
+            before: 400,
+            after: 200
+          }
+        })
+      );
+
+      // Create the unpaired t-test table
+      const unpairedTTestTable = this.createUnpairedTTestTable(unpairedTable);
+      content.push(unpairedTTestTable);
+
+      // Add spacing after table
+      content.push(
+        new Paragraph({
+          text: "",
+          spacing: { after: 400 }
+        })
+      );
+    }
+
+    // Add improvement percentage analysis table if available
+    const improvementTable = improvementTables[0];
+    if (improvementTable) {
+      content.push(
+        new Paragraph({
+          text: "Patient Improvement Analysis",
+          heading: HeadingLevel.HEADING_2,
+          spacing: {
+            before: 800,
+            after: 300
+          }
+        })
+      );
+
+      // Calculate table number (after statistical and unpaired tables)
+      const improvementTableNumber = statisticalTables.length + (unpairedTTestTables.length > 0 ? 1 : 0) + 27;
+
+      // Add improvement table title
+      content.push(
+        new Paragraph({
+          children: [
+            new TextRun({ 
+              text: `Table no-${improvementTableNumber}: ${improvementTable.title}`, 
+              bold: true 
+            })
+          ],
+          spacing: {
+            before: 400,
+            after: 200
+          }
+        })
+      );
+
+      // Create the improvement percentage table
+      const improvementPercentageTable = this.createImprovementPercentageTable(improvementTable);
+      content.push(improvementPercentageTable);
+
+      // Add spacing after table
+      content.push(
+        new Paragraph({
+          text: "",
+          spacing: { after: 400 }
+        })
+      );
+    }
+
     // Add legend/notes section
     content.push(
       new Paragraph({
@@ -195,12 +312,28 @@ class WordService {
 
     const notes = [
       "B.T = Before Treatment, A.T = After Treatment",
-      "df = Degrees of Freedom (n-1)",
+      "df = Degrees of Freedom",
       "Significance Levels: HS = Highly Significant, S = Significant, VS = Very Significant, NS = Not Significant",
       "p < 0.001 = Highly Significant (HS), p < 0.01 = Very Significant (VS), p < 0.05 = Significant (S), p ≥ 0.05 = Not Significant (NS)",
       "Effectiveness % = (Mean Difference / B.T Mean) × 100",
-      "Paired t-test analysis performed on before-after treatment data"
+      "Paired t-test analysis performed on before-after treatment data for individual sheets",
     ];
+
+    // Add unpaired t-test notes if we have that table
+    if (unpairedTable) {
+      notes.push(
+        "Unpaired t-test analysis compares Trial Group (Sheet 1) vs Control Group (Sheet 2)",
+        "Unpaired t-test df = n1 + n2 - 2, where n1 = trial group size, n2 = control group size"
+      );
+    }
+
+    // Add improvement percentage notes if we have that table
+    if (improvementTable) {
+      notes.push(
+        "Improvement % = ((BT - AT) / BT) × 100 for each patient",
+        "Categories: Cured(100%), Marked improved(75-100%), Moderate improved(50-75%), Mild improved(25-50%), Not cured(<25%)"
+      );
+    }
 
     notes.forEach(note => {
       content.push(
@@ -215,6 +348,155 @@ class WordService {
     });
 
     return content;
+  }
+
+  // NEW: Create unpaired t-test table
+  createUnpairedTTestTable(unpairedTableData) {
+    const statsArray = Array.isArray(unpairedTableData.statistics) ? unpairedTableData.statistics : [unpairedTableData.statistics];
+    
+    const rows = [];
+
+    // Create header row
+    const headerRow = new TableRow({
+      children: [
+        this.createHeaderCell("Symptoms"),
+        this.createHeaderCell("Assessment"),
+        this.createHeaderCell("Trial\nmean±S.D"),
+        this.createHeaderCell("Control\nmean±S.D"),
+        this.createHeaderCell("df"),
+        this.createHeaderCell("t-value"),
+        this.createHeaderCell("p-value"),
+        this.createHeaderCell("Remark")
+      ]
+    });
+    rows.push(headerRow);
+
+    // Create data rows for each statistic
+    statsArray.forEach((stats, idx) => {
+      const assessment = stats.assessment || `Assessment ${idx + 1}`;
+      const parameter = stats.parameter || 'Unknown Parameter';
+
+      // Format numeric presentation
+      const trialMeanSd = `${this.formatNumber(stats.trialMean, 3)}±${this.formatNumber(stats.trialSD, 4)}`;
+      const controlMeanSd = `${this.formatNumber(stats.controlMean, 3)}±${this.formatNumber(stats.controlSD, 4)}`;
+      const df = String(stats.degreesOfFreedom);
+      const tVal = this.formatNumber(stats.tValue, 4);
+      const pVal = this.formatPValue(stats.pValue);
+      const remark = this.getSignificanceRemark(stats.pValue);
+
+      const dataRow = new TableRow({
+        children: [
+          // Symptoms
+          this.createDataCell(parameter, false, AlignmentType.LEFT),
+          
+          // Assessment (7th day / 14th day / etc.)
+          this.createDataCell(assessment, false, AlignmentType.CENTER),
+          
+          // Trial Mean±S.D
+          this.createDataCell(trialMeanSd, false, AlignmentType.CENTER),
+          
+          // Control Mean±S.D
+          this.createDataCell(controlMeanSd, false, AlignmentType.CENTER),
+          
+          // df
+          this.createDataCell(df, false, AlignmentType.CENTER),
+          
+          // t-value
+          this.createDataCell(tVal, false, AlignmentType.CENTER),
+          
+          // p-value
+          this.createDataCell(pVal, false, AlignmentType.CENTER),
+          
+          // Remarks (HS, VS, S, NS)
+          this.createDataCell(remark, false, AlignmentType.CENTER)
+        ]
+      });
+
+      rows.push(dataRow);
+    });
+
+    return new Table({
+      rows: rows,
+      width: {
+        size: 100,
+        type: WidthType.PERCENTAGE
+      },
+      margins: {
+        top: 100,
+        bottom: 100,
+        left: 100,
+        right: 100
+      }
+    });
+  }
+
+  // Create improvement percentage table
+  createImprovementPercentageTable(improvementTableData) {
+    const improvementData = improvementTableData.improvementData;
+    const timePoints = improvementData.timePoints; // ['7th', '14th', '21st', '28th']
+    const categories = improvementData.categories; // ['Cured(100%)', 'Marked improved(75-100%)', etc.]
+    
+    const rows = [];
+
+    // Create header row
+    const headerCells = [
+      this.createHeaderCell("Improvement Category")
+    ];
+    
+    // Add Group A columns
+    timePoints.forEach(timePoint => {
+      headerCells.push(this.createHeaderCell(`Group A\n${timePoint} day`));
+    });
+    
+    // Add Group B columns
+    timePoints.forEach(timePoint => {
+      headerCells.push(this.createHeaderCell(`Group B\n${timePoint} day`));
+    });
+
+    const headerRow = new TableRow({
+      children: headerCells
+    });
+    rows.push(headerRow);
+
+    // Create data rows for each improvement category
+    categories.forEach(category => {
+      const dataCells = [
+        this.createDataCell(category, false, AlignmentType.LEFT)
+      ];
+      
+      // Add Group A data
+      timePoints.forEach(timePoint => {
+        const groupAData = improvementData.groupA[timePoint][category];
+        const displayText = `${groupAData.count} (${groupAData.percentage}%)`;
+        dataCells.push(this.createDataCell(displayText, false, AlignmentType.CENTER));
+      });
+      
+      // Add Group B data
+      timePoints.forEach(timePoint => {
+        const groupBData = improvementData.groupB[timePoint][category];
+        const displayText = `${groupBData.count} (${groupBData.percentage}%)`;
+        dataCells.push(this.createDataCell(displayText, false, AlignmentType.CENTER));
+      });
+
+      const dataRow = new TableRow({
+        children: dataCells
+      });
+      rows.push(dataRow);
+    });
+
+    return new Table({
+      rows: rows,
+      width: {
+        size: 100,
+        type: WidthType.PERCENTAGE
+      },
+      margins: {
+        top: 100,
+        bottom: 100,
+        left: 100,
+        right: 100
+      }
+    });
   }
 
   // This function now expects tableData.statistics to be an array (one object per AT subcolumn)
@@ -330,8 +612,11 @@ class WordService {
       ],
       width: {
         size: text === "Signs & Symptoms" ? 18 : 
+              text === "Symptoms" ? 18 :
               text === "Assessment" ? 12 : 
-              text === "Remarks" ? 10 : 11,
+              text === "Remarks" ? 10 : 
+              text === "Remark" ? 10 :
+              text === "Improvement Category" ? 20 : 11,
         type: WidthType.PERCENTAGE
       },
       shading: {

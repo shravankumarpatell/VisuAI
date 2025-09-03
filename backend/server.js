@@ -10,7 +10,7 @@ const excelService = require('./services/excelService');
 const wordService = require('./services/wordService');
 const wordParserService = require('./services/wordParserService');
 const signsParserService = require('./services/signsParserService');
-const masterChartService = require('./services/masterChartService'); // NEW
+const masterChartService = require('./services/masterChartService');
 if (!masterChartService || typeof masterChartService.processMasterChart !== 'function') {
   console.error('ERROR: services/masterChartService does not export processMasterChart(). Check services/masterChartService.js export.');
   throw new Error('masterChartService.processMasterChart is not available');
@@ -77,13 +77,15 @@ const upload = multer({
       'excel-to-word': ['.xlsx', '.xls'],
       'word-to-pdf': ['.docx', '.doc'],
       'signs-analysis': ['.docx', '.doc'],
-      'master-chart-analysis': ['.xlsx', '.xls'] // NEW
+      'master-chart-analysis': ['.xlsx', '.xls'],
+      'improvement-analysis': ['.docx', '.doc'] // NEW
     };
     
     let route = 'word-to-pdf'; // default
     if (req.path.includes('excel-to-word')) route = 'excel-to-word';
     else if (req.path.includes('signs-analysis')) route = 'signs-analysis';
-    else if (req.path.includes('master-chart-analysis')) route = 'master-chart-analysis'; // NEW
+    else if (req.path.includes('master-chart-analysis')) route = 'master-chart-analysis';
+    else if (req.path.includes('improvement-analysis')) route = 'improvement-analysis'; // NEW
     
     const ext = path.extname(file.originalname).toLowerCase();
     
@@ -95,7 +97,55 @@ const upload = multer({
   }
 });
 
-// NEW ROUTE: Master Chart Analysis
+// NEW ROUTE: Improvement Analysis
+app.post('/api/improvement-analysis', upload.single('file'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new AppError('No file uploaded', 400);
+  }
+
+  console.log('Processing Improvement Analysis Word file:', req.file.filename);
+
+  try {
+    // Validate file size
+    if (!ValidationUtils.validateFileSize(req.file.size, parseInt(process.env.MAX_FILE_SIZE_MB) || 10)) {
+      throw new AppError('File size exceeds limit', 400);
+    }
+
+    // Parse Word document for improvement data
+    const improvementData = await wordParserService.parseImprovementDocument(req.file.path);
+    
+    // Validate improvement data
+    const validation = ValidationUtils.validateImprovementDocument(improvementData);
+    if (!validation.valid) {
+      throw new AppError(`Invalid improvement document format: ${validation.errors.join(', ')}`, 422);
+    }
+    
+    // Generate improvement analysis graph (single PNG file)
+    const graphPath = await graphService.generateImprovementGraph(improvementData);
+    
+    console.log('Improvement analysis graph created:', graphPath);
+    
+    // Send PNG file
+    res.download(graphPath, 'improvement-analysis-graph.png', async (err) => {
+      if (err) {
+        console.error('Error sending improvement graph file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, error: 'Error downloading improvement graph file' });
+        }
+      }
+      
+      // Cleanup
+      await cleanup.cleanupFiles([req.file.path, graphPath]);
+    });
+
+  } catch (error) {
+    // Cleanup on error
+    await cleanup.cleanupFiles([req.file.path]);
+    throw error;
+  }
+}));
+
+// EXISTING ROUTE: Master Chart Analysis
 app.post('/api/master-chart-analysis', upload.single('file'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -124,7 +174,7 @@ app.post('/api/master-chart-analysis', upload.single('file'), asyncHandler(async
     }
     
     if (!validation.valid) {
-      // Log validation errors but proceed — this allows generating output for slightly non-standard master charts.
+      // Log validation errors but proceed – this allows generating output for slightly non-standard master charts.
       console.warn('Master chart validation failed with errors:', validation.errors);
     }
     
@@ -369,6 +419,5 @@ const server = app.listen(PORT, () => {
   console.log(`Upload directory: ${process.env.UPLOAD_DIR || 'uploads'}`);
   console.log(`Max file size: ${process.env.MAX_FILE_SIZE_MB || 10}MB`);
 });
-
 
 module.exports = app;
