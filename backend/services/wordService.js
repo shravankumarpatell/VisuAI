@@ -431,73 +431,355 @@ class WordService {
   }
 
   // Create improvement percentage table
-  createImprovementPercentageTable(improvementTableData) {
-    const improvementData = improvementTableData.improvementData;
-    const timePoints = improvementData.timePoints; // ['7th', '14th', '21st', '28th']
-    const categories = improvementData.categories; // ['Cured(100%)', 'Marked improved(75-100%)', etc.]
-    
-    const rows = [];
+// Updated createImprovementPercentageTable method in wordService.js
 
-    // Create header row
-    const headerCells = [
-      this.createHeaderCell("Improvement Category")
-    ];
-    
-    // Add Group A columns
-    timePoints.forEach(timePoint => {
-      headerCells.push(this.createHeaderCell(`Group A\n${timePoint} day`));
-    });
-    
-    // Add Group B columns
+// UPDATED: Create improvement percentage table with support for single group
+createImprovementPercentageTable(improvementTableData) {
+  const improvementData = improvementTableData.improvementData;
+  const timePoints = improvementData.timePoints; // ['7th', '14th', '21st', '28th']
+  const categories = improvementData.categories; // ['Cured(100%)', 'Marked improved(75-100%)', etc.]
+  const isSingleGroup = improvementData.isSingleGroup || false;
+  
+  const rows = [];
+
+  // Create header row - adjust based on single or dual group
+  const headerCells = [
+    this.createHeaderCell("Improvement Category")
+  ];
+  
+  // Add Group A columns
+  timePoints.forEach(timePoint => {
+    headerCells.push(this.createHeaderCell(`Group A\n${timePoint} day`));
+  });
+  
+  // Only add Group B columns if we have dual group data
+  if (!isSingleGroup && improvementData.groupB) {
     timePoints.forEach(timePoint => {
       headerCells.push(this.createHeaderCell(`Group B\n${timePoint} day`));
     });
+  }
 
-    const headerRow = new TableRow({
-      children: headerCells
+  const headerRow = new TableRow({
+    children: headerCells
+  });
+  rows.push(headerRow);
+
+  // Create data rows for each improvement category
+  categories.forEach(category => {
+    const dataCells = [
+      this.createDataCell(category, false, AlignmentType.LEFT)
+    ];
+    
+    // Add Group A data
+    timePoints.forEach(timePoint => {
+      const groupAData = improvementData.groupA[timePoint][category];
+      const displayText = `${groupAData.count} (${groupAData.percentage}%)`;
+      dataCells.push(this.createDataCell(displayText, false, AlignmentType.CENTER));
     });
-    rows.push(headerRow);
-
-    // Create data rows for each improvement category
-    categories.forEach(category => {
-      const dataCells = [
-        this.createDataCell(category, false, AlignmentType.LEFT)
-      ];
-      
-      // Add Group A data
-      timePoints.forEach(timePoint => {
-        const groupAData = improvementData.groupA[timePoint][category];
-        const displayText = `${groupAData.count} (${groupAData.percentage}%)`;
-        dataCells.push(this.createDataCell(displayText, false, AlignmentType.CENTER));
-      });
-      
-      // Add Group B data
+    
+    // Only add Group B data if we have dual group data
+    if (!isSingleGroup && improvementData.groupB) {
       timePoints.forEach(timePoint => {
         const groupBData = improvementData.groupB[timePoint][category];
         const displayText = `${groupBData.count} (${groupBData.percentage}%)`;
         dataCells.push(this.createDataCell(displayText, false, AlignmentType.CENTER));
       });
+    }
 
-      const dataRow = new TableRow({
-        children: dataCells
-      });
-      rows.push(dataRow);
+    const dataRow = new TableRow({
+      children: dataCells
     });
+    rows.push(dataRow);
+  });
 
-    return new Table({
-      rows: rows,
-      width: {
-        size: 100,
-        type: WidthType.PERCENTAGE
-      },
-      margins: {
-        top: 100,
-        bottom: 100,
-        left: 100,
-        right: 100
+  return new Table({
+    rows: rows,
+    width: {
+      size: 100,
+      type: WidthType.PERCENTAGE
+    },
+    margins: {
+      top: 100,
+      bottom: 100,
+      left: 100,
+      right: 100
+    }
+  });
+}
+
+// UPDATED: Create Master Chart content with single group support
+createMasterChartContent(masterChartData) {
+  const content = [];
+
+  // Add main title
+  content.push(
+    new Paragraph({
+      text: "Master Chart Statistical Analysis",
+      heading: HeadingLevel.HEADING_1,
+      alignment: AlignmentType.CENTER,
+      spacing: {
+        after: 600
       }
-    });
+    })
+  );
+
+  // Add source file information
+  if (masterChartData.sourceFile) {
+    const filename = path.basename(masterChartData.sourceFile);
+    content.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Source File: ", bold: true }),
+          new TextRun({ text: filename })
+        ],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 }
+      })
+    );
   }
+
+  // Add processing summary
+  const statisticalTables = masterChartData.tables.filter(t => t.type === 'statistical_analysis');
+  const improvementTables = masterChartData.tables.filter(t => t.type === 'improvement_percentage');
+  const unpairedTTestTables = masterChartData.tables.filter(t => t.type === 'unpaired_ttest');
+  
+  content.push(
+    new Paragraph({
+      children: [
+        new TextRun({ 
+          text: `Processed ${masterChartData.processedSheets} of ${masterChartData.totalSheets} sheets • Generated ${statisticalTables.length} statistical tables`,
+          italic: true
+        }),
+        ...(improvementTables.length > 0 ? [
+          new TextRun({ text: " • ", italic: true }),
+          new TextRun({ 
+            text: `${improvementTables.length} improvement percentage analysis table${improvementTables[0]?.isSingleGroup ? ' (single group)' : ''}`, 
+            italic: true 
+          })
+        ] : []),
+        ...(unpairedTTestTables.length > 0 ? [
+          new TextRun({ text: " • ", italic: true }),
+          new TextRun({ text: `${unpairedTTestTables.length} unpaired t-test comparison table`, italic: true })
+        ] : [])
+      ],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 400 }
+    })
+  );
+
+  // First, create statistical analysis tables (existing functionality - paired t-test)
+  const statisticalTablesBySheet = {};
+  statisticalTables.forEach((table, index) => {
+    table.tableNumber = (index + 27); // keep starting table numbering at 27 as before
+    if (!statisticalTablesBySheet[table.sheetNumber]) {
+      statisticalTablesBySheet[table.sheetNumber] = [];
+    }
+    statisticalTablesBySheet[table.sheetNumber].push(table);
+  });
+
+  // Create statistical tables for each sheet
+  Object.keys(statisticalTablesBySheet).sort((a, b) => parseInt(a) - parseInt(b)).forEach(sheetNumber => {
+    const sheetTables = statisticalTablesBySheet[sheetNumber];
+    
+    // Add sheet section header
+    content.push(
+      new Paragraph({
+        text: `Sheet ${sheetNumber}: ${sheetTables[0].sheetName}`,
+        heading: HeadingLevel.HEADING_2,
+        spacing: {
+          before: 600,
+          after: 300
+        }
+      })
+    );
+
+    // Add tables for this sheet
+    sheetTables.forEach((table) => {
+      // Add table title
+      content.push(
+        new Paragraph({
+          children: [
+            new TextRun({ 
+              text: `Table no-${table.tableNumber}: Comparison of `, 
+              bold: true 
+            }),
+            new TextRun({ 
+              text: `${table.title}`, 
+              bold: true 
+            }),
+            new TextRun({ 
+              text: ` in signs & symptoms assessment:`, 
+              bold: true 
+            })
+          ],
+          spacing: {
+            before: 400,
+            after: 200
+          }
+        })
+      );
+
+      // Create the statistical table
+      const statisticalTable = this.createMasterChartTable(table);
+      content.push(statisticalTable);
+
+      // Add spacing after table
+      content.push(
+        new Paragraph({
+          text: "",
+          spacing: { after: 400 }
+        })
+      );
+    });
+  });
+
+  // Add unpaired t-test comparison table if available (only for dual groups)
+  const unpairedTable = unpairedTTestTables[0];
+  if (unpairedTable) {
+    content.push(
+      new Paragraph({
+        text: "Trial vs Control Group Comparison",
+        heading: HeadingLevel.HEADING_2,
+        spacing: {
+          before: 800,
+          after: 300
+        }
+      })
+    );
+
+    // Add unpaired t-test table title
+    content.push(
+      new Paragraph({
+        children: [
+          new TextRun({ 
+            text: `Table no-${statisticalTables.length + 27}: ${unpairedTable.title}`, 
+            bold: true 
+          })
+        ],
+        spacing: {
+          before: 400,
+          after: 200
+        }
+      })
+    );
+
+    // Create the unpaired t-test table
+    const unpairedTTestTable = this.createUnpairedTTestTable(unpairedTable);
+    content.push(unpairedTTestTable);
+
+    // Add spacing after table
+    content.push(
+      new Paragraph({
+        text: "",
+        spacing: { after: 400 }
+      })
+    );
+  }
+
+  // Add improvement percentage analysis table if available
+  const improvementTable = improvementTables[0];
+  if (improvementTable) {
+    const isSingleGroup = improvementTable.isSingleGroup || false;
+    
+    content.push(
+      new Paragraph({
+        text: isSingleGroup ? "Patient Improvement Analysis (Single Group)" : "Patient Improvement Analysis",
+        heading: HeadingLevel.HEADING_2,
+        spacing: {
+          before: 800,
+          after: 300
+        }
+      })
+    );
+
+    // Calculate table number (after statistical and unpaired tables)
+    const improvementTableNumber = statisticalTables.length + (unpairedTTestTables.length > 0 ? 1 : 0) + 27;
+
+    // Add improvement table title
+    content.push(
+      new Paragraph({
+        children: [
+          new TextRun({ 
+            text: `Table no-${improvementTableNumber}: ${improvementTable.title}`, 
+            bold: true 
+          })
+        ],
+        spacing: {
+          before: 400,
+          after: 200
+        }
+      })
+    );
+
+    // Create the improvement percentage table
+    const improvementPercentageTable = this.createImprovementPercentageTable(improvementTable);
+    content.push(improvementPercentageTable);
+
+    // Add spacing after table
+    content.push(
+      new Paragraph({
+        text: "",
+        spacing: { after: 400 }
+      })
+    );
+  }
+
+  // Add legend/notes section
+  content.push(
+    new Paragraph({
+      text: "Statistical Notes:",
+      heading: HeadingLevel.HEADING_3,
+      spacing: {
+        before: 600,
+        after: 300
+      }
+    })
+  );
+
+  const notes = [
+    "B.T = Before Treatment, A.T = After Treatment",
+    "df = Degrees of Freedom",
+    "Significance Levels: HS = Highly Significant, S = Significant, VS = Very Significant, NS = Not Significant",
+    "p < 0.001 = Highly Significant (HS), p < 0.01 = Very Significant (VS), p < 0.05 = Significant (S), p ≥ 0.05 = Not Significant (NS)",
+    "Effectiveness % = (Mean Difference / B.T Mean) × 100",
+    "Paired t-test analysis performed on before-after treatment data for individual sheets",
+  ];
+
+  // Add unpaired t-test notes if we have that table
+  if (unpairedTable) {
+    notes.push(
+      "Unpaired t-test analysis compares Trial Group (Sheet 1) vs Control Group (Sheet 2)",
+      "Unpaired t-test df = n1 + n2 - 2, where n1 = trial group size, n2 = control group size"
+    );
+  }
+
+  // Add improvement percentage notes if we have that table
+  if (improvementTable) {
+    const isSingleGroup = improvementTable.isSingleGroup || false;
+    notes.push(
+      "Improvement % = ((BT - AT) / BT) × 100 for each patient",
+      "Categories: Cured(100%), Marked improved(75-100%), Moderate improved(50-75%), Mild improved(25-50%), Not cured(<25%)"
+    );
+    
+    if (isSingleGroup) {
+      notes.push("Single group analysis: Only Group A data available for improvement categorization");
+    }
+  }
+
+  notes.forEach(note => {
+    content.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "• " }),
+          new TextRun({ text: note })
+        ],
+        spacing: { after: 100 }
+      })
+    );
+  });
+
+  return content;
+}
 
   // This function now expects tableData.statistics to be an array (one object per AT subcolumn)
   createMasterChartTable(tableData) {

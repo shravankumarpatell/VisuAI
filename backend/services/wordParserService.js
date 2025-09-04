@@ -23,7 +23,7 @@ class WordParserService {
     }
   }
 
-  // NEW: Parse Word document for improvement percentage data
+  // IMPROVED: Parse Word document for improvement percentage data with dynamic day detection
   async parseImprovementDocument(filePath) {
     try {
       console.log('Parsing improvement document:', filePath);
@@ -92,11 +92,15 @@ class WordParserService {
       const cellMatches = rowMatch[1].matchAll(cellRegex);
       
       for (const cellMatch of cellMatches) {
-        const text = cellMatch[1]
+        let text = cellMatch[1]
           .replace(/<[^>]*>/g, '')
           .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
+          .replace(/&amp;/g, '')
           .trim();
+        
+        // DECODE HTML ENTITIES HERE TOO
+        text = this.decodeHtmlEntities(text);
+        
         cells.push(text);
       }
       
@@ -105,7 +109,7 @@ class WordParserService {
       }
     }
 
-    if (rows.length < 3) return null; // Need at least header + 2 data rows
+    if (rows.length < 3) return null;
 
     return this.processImprovementTableRows(rows);
   }
@@ -148,9 +152,11 @@ class WordParserService {
       const tableRows = [];
       
       for (const line of tableLines) {
-        // Split by multiple spaces or tabs
+        // Better splitting logic for text tables
         const parts = line.split(/\s{2,}|\t+/).map(p => p.trim()).filter(p => p);
-        if (parts.length >= 5) { // Should have category + at least 4 columns of data
+        
+        // More flexible column count check
+        if (parts.length >= 3) { // Minimum: category + at least 2 columns of data
           tableRows.push(parts);
         }
       }
@@ -165,121 +171,319 @@ class WordParserService {
     }
   }
 
-  processImprovementTableRows(rows) {
-    try {
-      if (!rows || rows.length < 2) return null;
+  // COMPLETELY REWRITTEN: Dynamic day detection with comprehensive pattern matching
+// UPDATED: Enhanced processImprovementTableRows method with flexible time period detection
+processImprovementTableRows(rows) {
+  try {
+    if (!rows || rows.length < 2) return null;
+    
+    const headerRow = rows[0];
+    const dataRows = rows.slice(1);
+    
+    console.log('Processing improvement table with header:', headerRow);
+    console.log('Number of data rows:', dataRows.length);
+    
+    // ENHANCED: More flexible time period detection
+    const timePeriods = new Set();
+    const groupAColumns = [];
+    const groupBColumns = [];
+    
+    // Parse header to find Group A and Group B columns for each time period
+    for (let i = 1; i < headerRow.length; i++) {
+      const cell = headerRow[i].toLowerCase().trim();
       
-      const headerRow = rows[0];
-      const dataRows = rows.slice(1);
+      // ENHANCED: Comprehensive pattern matching for various time formats
+      const timePatterns = [
+        // Standard day patterns: "7th day", "14th day", "1st day", "3rd day"
+        /\b(\d{1,2})(?:st|nd|rd|th)?\s*day\b/i,
+        // Reverse patterns: "day 7", "day 14", "day 1", "day 3"
+        /\bday\s*(\d{1,2})(?:st|nd|rd|th)?\b/i,
+        // Just ordinal numbers: "1st", "3rd", "5th", "7th", "19th"
+        /\b(\d{1,2})(?:st|nd|rd|th)\b/i,
+        // Simple letter patterns: "AT", "AF", "BT", "BF" (After Treatment, After Follow-up, etc.)
+        /\b([A-Z]{1,3})\b/i,
+        // Time-based patterns: "week 1", "month 1", "follow-up", "baseline"
+        /\b(?:week|month|wk|mo)\s*(\d+)\b/i,
+        /\b(follow-?up|baseline|initial|final)\b/i,
+        // Plain numbers when context suggests time periods
+        /\b(\d{1,2})\b/i
+      ];
       
-      // Identify time periods from header
-      const timePeriods = [];
-      const groupAColumns = [];
-      const groupBColumns = [];
+      let timeMatch = null;
+      let timePeriod = null;
       
-      // Parse header to find Group A and Group B columns for each time period
-      for (let i = 1; i < headerRow.length; i++) {
-        const cell = headerRow[i].toLowerCase();
-        
-        // Look for day patterns: "7th day", "14th day", etc.
-        const dayMatch = cell.match(/\b(7|14|21|28)(?:th)?\s*day\b/);
-        if (dayMatch) {
-          const day = `${dayMatch[1]}th`;
-          if (!timePeriods.includes(day)) {
-            timePeriods.push(day);
-          }
+      // Try each pattern
+      for (const pattern of timePatterns) {
+        timeMatch = cell.match(pattern);
+        if (timeMatch) {
+          const matchedValue = timeMatch[1];
           
-          // Determine if this is Group A or Group B based on position or header text
-          if (cell.includes('group a') || cell.includes('groupa') || 
-              (timePeriods.length === 1 && groupAColumns.length === 0)) {
-            groupAColumns.push({ day: day, index: i });
-          } else if (cell.includes('group b') || cell.includes('groupb')) {
-            groupBColumns.push({ day: day, index: i });
+          // Handle different types of matches
+          if (/^\d+$/.test(matchedValue)) {
+            // Numeric match - validate reasonable range
+            const dayNumber = parseInt(matchedValue);
+            if (dayNumber >= 1 && dayNumber <= 365) {
+              timePeriod = this.formatDayWithOrdinal(dayNumber);
+              break;
+            }
+          } else if (/^[A-Z]{1,3}$/i.test(matchedValue)) {
+            // Letter pattern match (AT, AF, etc.)
+            timePeriod = matchedValue.toUpperCase();
+            break;
+          } else if (/^(follow-?up|baseline|initial|final)$/i.test(matchedValue)) {
+            // Special time period names
+            timePeriod = matchedValue.toLowerCase().replace('-', '');
+            break;
+          }
+        }
+      }
+      
+      if (timePeriod) {
+        timePeriods.add(timePeriod);
+        
+        console.log(`Found time period: ${timePeriod} in column ${i}: "${cell}"`);
+        
+        // Enhanced group assignment logic
+        if (cell.includes('group a') || cell.includes('groupa') || cell.includes('a group') || 
+            cell.includes('trial') || cell.includes('treatment') || cell.includes('test')) {
+          groupAColumns.push({ day: timePeriod, index: i });
+          console.log(`Assigned to Group A: ${timePeriod}`);
+        } else if (cell.includes('group b') || cell.includes('groupb') || cell.includes('b group') ||
+                   cell.includes('control') || cell.includes('placebo')) {
+          groupBColumns.push({ day: timePeriod, index: i });
+          console.log(`Assigned to Group B: ${timePeriod}`);
+        } else {
+          // Smart auto-assignment based on existing groups
+          const existingAForThisTime = groupAColumns.filter(col => col.day === timePeriod);
+          const existingBForThisTime = groupBColumns.filter(col => col.day === timePeriod);
+          
+          if (existingAForThisTime.length === 0) {
+            groupAColumns.push({ day: timePeriod, index: i });
+            console.log(`Auto-assigned to Group A: ${timePeriod} (column ${i})`);
+          } else if (existingBForThisTime.length === 0) {
+            groupBColumns.push({ day: timePeriod, index: i });
+            console.log(`Auto-assigned to Group B: ${timePeriod} (column ${i})`);
           } else {
-            // Alternate assignment if not explicitly labeled
-            if (groupAColumns.filter(col => col.day === day).length === 0) {
-              groupAColumns.push({ day: day, index: i });
+            // Balanced assignment
+            if (groupAColumns.length <= groupBColumns.length) {
+              groupAColumns.push({ day: timePeriod, index: i });
+              console.log(`Balanced-assigned to Group A: ${timePeriod} (column ${i})`);
             } else {
-              groupBColumns.push({ day: day, index: i });
+              groupBColumns.push({ day: timePeriod, index: i });
+              console.log(`Balanced-assigned to Group B: ${timePeriod} (column ${i})`);
             }
           }
         }
       }
+    }
+    
+    // Convert Set to Array with intelligent sorting
+    const timePeriodsArray = this.sortTimePeriods(Array.from(timePeriods));
+    
+    console.log('Final time periods found:', timePeriodsArray);
+    console.log('Group A columns:', groupAColumns);
+    console.log('Group B columns:', groupBColumns);
+    
+    // FIXED: Handle minimum 1 time period instead of requiring 3
+    if (timePeriodsArray.length === 0) {
+      console.warn('No time periods found in header row. Attempting fallback detection...');
       
-      // Default time periods if not found in header
-      if (timePeriods.length === 0) {
-        timePeriods.push('7th', '14th', '21st', '28th');
-      }
-      
-      // Identify improvement categories
-      const categories = [];
-      const improvementData = {
-        categories: [],
-        timePeriods: timePeriods,
-        groupA: {},
-        groupB: {}
-      };
-      
-      // Initialize data structure
-      timePeriods.forEach(period => {
-        improvementData.groupA[period] = {};
-        improvementData.groupB[period] = {};
-      });
-      
-      // Process data rows
-      for (const row of dataRows) {
-        if (row.length < 2) continue;
+      // Fallback: look for any patterns in header that might indicate time periods
+      for (let i = 1; i < headerRow.length; i++) {
+        const cell = headerRow[i];
         
-        const category = row[0].trim();
+        // Try to extract any meaningful identifiers
+        const fallbackPatterns = [
+          /\b([A-Z]{1,4})\b/g,  // Any capital letters
+          /\b(\d+)\b/g,          // Any numbers
+          /\b(pre|post|before|after|initial|final)\b/gi  // Common time indicators
+        ];
         
-        // Skip total rows or empty categories
-        if (category.toLowerCase().includes('total') || !category) continue;
-        
-        // Normalize category names
-        const normalizedCategory = this.normalizeImprovementCategory(category);
-        if (!normalizedCategory) continue;
-        
-        categories.push(normalizedCategory);
-        
-        // Initialize category data
-        timePeriods.forEach(period => {
-          improvementData.groupA[period][normalizedCategory] = { count: 0, percentage: 0 };
-          improvementData.groupB[period][normalizedCategory] = { count: 0, percentage: 0 };
-        });
-        
-        // Parse data cells
-        for (let i = 1; i < row.length && i < headerRow.length; i++) {
-          const cellValue = row[i].trim();
-          const parsed = this.parseCountPercentage(cellValue);
-          
-          if (!parsed) continue;
-          
-          // Determine which time period and group this column represents
-          const dayMatch = headerRow[i].match(/\b(7|14|21|28)(?:th)?\s*day\b/);
-          if (!dayMatch) continue;
-          
-          const day = `${dayMatch[1]}th`;
-          const isGroupA = headerRow[i].toLowerCase().includes('group a') || 
-                          headerRow[i].toLowerCase().includes('groupa') || 
-                          (i <= Math.ceil(headerRow.length / 2));
-          
-          const group = isGroupA ? 'groupA' : 'groupB';
-          improvementData[group][day][normalizedCategory] = parsed;
+        for (const pattern of fallbackPatterns) {
+          const matches = cell.matchAll(pattern);
+          for (const match of matches) {
+            const value = match[1];
+            if (value && !timePeriodsArray.includes(value)) {
+              timePeriodsArray.push(value);
+              // Assign to groups alternately
+              if (groupAColumns.length <= groupBColumns.length) {
+                groupAColumns.push({ day: value, index: i });
+              } else {
+                groupBColumns.push({ day: value, index: i });
+              }
+            }
+          }
         }
       }
-      
-      improvementData.categories = [...new Set(categories)];
-      
-      // Validate we have the expected structure
-      if (improvementData.categories.length === 0 || improvementData.timePeriods.length === 0) {
-        return null;
-      }
-      
-      return improvementData;
-      
-    } catch (error) {
-      console.error('Error processing improvement table rows:', error);
+    }
+    
+    // FIXED: Allow single time period analysis
+    if (timePeriodsArray.length === 0) {
+      console.error('Could not detect any time periods from table header');
       return null;
+    }
+    
+    console.log(`Processing table with ${timePeriodsArray.length} time period(s)`);
+    
+    // Process categories and data
+    const categories = [];
+    const improvementData = {
+      categories: [],
+      timePeriods: timePeriodsArray,
+      groupA: {},
+      groupB: {}
+    };
+    
+    // Initialize data structure for all time periods
+    timePeriodsArray.forEach(period => {
+      improvementData.groupA[period] = {};
+      improvementData.groupB[period] = {};
+    });
+    
+    // Process data rows
+    for (const row of dataRows) {
+      if (row.length < 2) continue;
+      
+      const category = row[0].trim();
+      
+      // Skip total rows or empty categories
+      if (category.toLowerCase().includes('total') || !category) continue;
+      
+      // More flexible category normalization
+      const normalizedCategory = this.normalizeImprovementCategory(category);
+      if (!normalizedCategory) continue;
+      
+      categories.push(normalizedCategory);
+      
+      // Initialize category data for all time periods
+      timePeriodsArray.forEach(period => {
+        improvementData.groupA[period][normalizedCategory] = { count: 0, percentage: 0 };
+        improvementData.groupB[period][normalizedCategory] = { count: 0, percentage: 0 };
+      });
+      
+      // Parse data cells using column mappings
+      groupAColumns.forEach(colInfo => {
+        if (colInfo.index < row.length) {
+          const cellValue = row[colInfo.index].trim();
+          const parsed = this.parseCountPercentage(cellValue);
+          if (parsed) {
+            improvementData.groupA[colInfo.day][normalizedCategory] = parsed;
+            console.log(`Group A ${colInfo.day} ${normalizedCategory}: ${parsed.count} (${parsed.percentage}%)`);
+          }
+        }
+      });
+      
+      groupBColumns.forEach(colInfo => {
+        if (colInfo.index < row.length) {
+          const cellValue = row[colInfo.index].trim();
+          const parsed = this.parseCountPercentage(cellValue);
+          if (parsed) {
+            improvementData.groupB[colInfo.day][normalizedCategory] = parsed;
+            console.log(`Group B ${colInfo.day} ${normalizedCategory}: ${parsed.count} (${parsed.percentage}%)`);
+          }
+        }
+      });
+    }
+    
+    improvementData.categories = [...new Set(categories)];
+    
+    // Validate we have the expected structure
+    if (improvementData.categories.length === 0) {
+      console.error('No valid improvement categories found');
+      return null;
+    }
+    
+    console.log('Successfully processed improvement data:', {
+      categories: improvementData.categories,
+      timePeriods: improvementData.timePeriods,
+      groupAKeys: Object.keys(improvementData.groupA),
+      groupBKeys: Object.keys(improvementData.groupB)
+    });
+    
+    return improvementData;
+    
+  } catch (error) {
+    console.error('Error processing improvement table rows:', error);
+    return null;
+  }
+}
+
+// NEW: Intelligent time period sorting
+sortTimePeriods(periods) {
+  return periods.sort((a, b) => {
+    // Extract numeric values for comparison
+    const getNumericValue = (period) => {
+      const numMatch = period.match(/\d+/);
+      return numMatch ? parseInt(numMatch[0]) : 999;
+    };
+    
+    const getTypeOrder = (period) => {
+      // Prioritize different types of time periods
+      if (/^\d+(st|nd|rd|th)$/.test(period)) return 1; // Ordinal numbers first
+      if (/^[A-Z]{1,3}$/.test(period)) return 2; // Letter codes second
+      if (/baseline|initial|pre/i.test(period)) return 0; // Baseline first
+      if (/follow|final|post/i.test(period)) return 3; // Follow-up last
+      return 2; // Default middle priority
+    };
+    
+    const typeOrderA = getTypeOrder(a);
+    const typeOrderB = getTypeOrder(b);
+    
+    if (typeOrderA !== typeOrderB) {
+      return typeOrderA - typeOrderB;
+    }
+    
+    // If same type, sort by numeric value
+    return getNumericValue(a) - getNumericValue(b);
+  });
+}
+
+// ENHANCED: More flexible category normalization
+normalizeImprovementCategory(category) {
+  const cat = category.toLowerCase().trim();
+  
+  // Handle various formats of improvement categories
+  if (cat.includes('cured') && (cat.includes('100') || cat.includes('complete'))) {
+    return 'Cured(100%)';
+  } else if (cat.includes('marked') && (cat.includes('75') || cat.includes('improve'))) {
+    return 'Marked improved(75-100%)';
+  } else if (cat.includes('moderate') && (cat.includes('50') || cat.includes('improve'))) {
+    return 'Moderate improved(50-75%)';
+  } else if (cat.includes('mild') && (cat.includes('25') || cat.includes('improve'))) {
+    return 'Mild improved(25-50%)';
+  } else if (cat.includes('not cured') || cat.includes('no improve') || (cat.includes('25') && cat.includes('<'))) {
+    return 'Not cured(<25%)';
+  } else if (cat.includes('excellent') || cat.includes('complete')) {
+    return 'Cured(100%)';
+  } else if (cat.includes('good') || cat.includes('significant')) {
+    return 'Marked improved(75-100%)';
+  } else if (cat.includes('fair') || cat.includes('moderate')) {
+    return 'Moderate improved(50-75%)';
+  } else if (cat.includes('poor') || cat.includes('minimal')) {
+    return 'Mild improved(25-50%)';
+  } else if (cat.includes('none') || cat.includes('nil')) {
+    return 'Not cured(<25%)';
+  }
+  
+  // Return original if no match (for flexibility)
+  return category.trim();
+}
+
+  // NEW: Helper method to format day numbers with proper ordinal suffixes
+  formatDayWithOrdinal(dayNumber) {
+    const num = parseInt(dayNumber);
+    
+    // Special cases for 11th, 12th, 13th
+    if (num % 100 >= 11 && num % 100 <= 13) {
+      return `${num}th`;
+    }
+    
+    // Standard ordinal rules
+    switch (num % 10) {
+      case 1: return `${num}st`;
+      case 2: return `${num}nd`;
+      case 3: return `${num}rd`;
+      default: return `${num}th`;
     }
   }
 
@@ -355,12 +559,15 @@ class WordParserService {
       const cellMatches = rowMatch[1].matchAll(cellRegex);
       
       for (const cellMatch of cellMatches) {
-        // Remove HTML tags and clean text
-        const text = cellMatch[1]
+        // Remove HTML tags and decode HTML entities
+        let text = cellMatch[1]
           .replace(/<[^>]*>/g, '')
           .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
           .trim();
+        
+        // DECODE HTML ENTITIES HERE
+        text = this.decodeHtmlEntities(text);
+        
         cells.push(text);
       }
       
@@ -369,25 +576,24 @@ class WordParserService {
       }
     }
 
+    // Rest of the method remains the same...
     if (rows.length < 2) return null;
 
-    // Extract title from the table or use first column header
     let title = 'Table';
     const headerRow = rows[0];
     
-    // Check if this looks like our expected table format
     if (headerRow.length >= 5 && 
         headerRow[1].toLowerCase().includes('trial') && 
         headerRow[2].toLowerCase().includes('control')) {
       
-      title = headerRow[0] || 'Data';
+      title = this.decodeHtmlEntities(headerRow[0]) || 'Data';
       
       const data = [];
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         if (row.length >= 5) {
           data.push({
-            category: row[0],
+            category: this.decodeHtmlEntities(row[0]),
             trialGroup: parseInt(row[1]) || 0,
             controlGroup: parseInt(row[2]) || 0,
             total: parseInt(row[3]) || 0,
@@ -405,7 +611,32 @@ class WordParserService {
     return null;
   }
 
+
+  decodeHtmlEntities(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    const entityMap = {
+      '&lt;': '<',
+      '&gt;': '>',
+      '&amp;': '&',
+      '&quot;': '"',
+      '&#39;': "'",
+      '&apos;': "'",
+      '&nbsp;': ' ',
+      '&copy;': '©',
+      '&reg;': '®',
+      '&trade;': '™'
+    };
+    
+    return text.replace(/&[a-zA-Z0-9#]+;/g, (entity) => {
+      return entityMap[entity] || entity;
+    });
+  }
+
   extractTablesFromText(text) {
+    // Decode any HTML entities that might exist in extracted text
+    text = this.decodeHtmlEntities(text);
+    
     const tables = [];
     const lines = text.split('\n').map(line => line.trim()).filter(line => line);
     
@@ -413,7 +644,7 @@ class WordParserService {
     let isInTable = false;
     
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      const line = this.decodeHtmlEntities(lines[i]); // Decode each line
       
       // Look for table headers
       if (line.toLowerCase().includes('table no') && line.includes(':')) {
@@ -425,7 +656,7 @@ class WordParserService {
         const title = titleMatch ? titleMatch[1].replace(/[:\s]+$/, '') : 'Table';
         
         currentTable = {
-          title: title,
+          title: this.decodeHtmlEntities(title),
           rows: []
         };
         isInTable = false;
@@ -445,7 +676,7 @@ class WordParserService {
         
         if (parts.length >= 5) {
           const row = {
-            category: parts[0],
+            category: this.decodeHtmlEntities(parts[0]),
             trialGroup: parseInt(parts[1]) || 0,
             controlGroup: parseInt(parts[2]) || 0,
             total: parseInt(parts[3]) || 0,

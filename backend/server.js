@@ -114,14 +114,25 @@ app.post('/api/improvement-analysis', upload.single('file'), asyncHandler(async 
     // Parse Word document for improvement data
     const improvementData = await wordParserService.parseImprovementDocument(req.file.path);
     
-    // Validate improvement data
+    if (!improvementData) {
+      throw new AppError('No improvement data found in the document. Please ensure your document contains a table with improvement categories and time period data.', 422);
+    }
+
+    // UPDATED: Use flexible validation that accepts any time period format
     const validation = ValidationUtils.validateImprovementDocument(improvementData);
     if (!validation.valid) {
-      throw new AppError(`Invalid improvement document format: ${validation.errors.join(', ')}`, 422);
+      console.error('Improvement document validation failed:', validation.errors);
+      throw new AppError(`Invalid improvement document format: ${validation.errors[0]}`, 422);
     }
+    
+    console.log(`Validation passed for improvement data with ${improvementData.timePeriods.length} time periods: [${improvementData.timePeriods.join(', ')}]`);
     
     // Generate improvement analysis graph (single PNG file)
     const graphPath = await graphService.generateImprovementGraph(improvementData);
+    
+    if (!graphPath) {
+      throw new AppError('Failed to generate improvement analysis graph', 500);
+    }
     
     console.log('Improvement analysis graph created:', graphPath);
     
@@ -139,9 +150,24 @@ app.post('/api/improvement-analysis', upload.single('file'), asyncHandler(async 
     });
 
   } catch (error) {
+    console.error('Improvement analysis error:', error);
+    
     // Cleanup on error
     await cleanup.cleanupFiles([req.file.path]);
-    throw error;
+    
+    // Enhance error messages for common issues
+    let errorMessage = error.message;
+    
+    if (error.message.includes('No improvement data found')) {
+      errorMessage = 'Could not find improvement data in the document. Please ensure your document contains a table with:' +
+        '\n- Improvement categories (like "Cured", "Marked improved", etc.)' +
+        '\n- Time period columns (can be any format: "7th day", "AT", "AF", "1st", "3rd", etc.)' +
+        '\n- Group A and/or Group B data';
+    } else if (error.message.includes('time periods')) {
+      errorMessage = `Time period parsing issue: ${error.message}. Supported formats include: 7th, 14th, 21st, AT, AF, 1st, 3rd, 5th, 19th, etc.`;
+    }
+    
+    throw new AppError(errorMessage, error.statusCode || 500);
   }
 }));
 

@@ -29,13 +29,13 @@ class MasterChartService {
       if (table) processedTables.push(table);
     }
 
-    // Generate improvement percentage table if we have at least 2 groups
-    if (Object.keys(groupData).length >= 2) {
+    // UPDATED: Generate improvement percentage table if we have at least 1 group (changed from 2)
+    if (Object.keys(groupData).length >= 1) {
       const improvementTable = await this._generateImprovementPercentageTable(groupData);
       if (improvementTable) processedTables.push(improvementTable);
     }
 
-    // NEW: Generate unpaired t-test table if we have exactly 2 groups (Trial vs Control)
+    // Generate unpaired t-test table if we have exactly 2 groups (Trial vs Control)
     if (Object.keys(groupData).length >= 2) {
       const unpairedTable = await this._generateUnpairedTTestTable(groupData, processedTables);
       if (unpairedTable) processedTables.push(unpairedTable);
@@ -48,12 +48,225 @@ class MasterChartService {
       sourceFile: filePath,
       totalSheets: workbook.worksheets.length,
       processedSheets: Object.keys(groupData).length,
-      hasImprovementAnalysis: Object.keys(groupData).length >= 2,
+      hasImprovementAnalysis: Object.keys(groupData).length >= 1, // UPDATED: changed from 2 to 1
       hasUnpairedTTest: Object.keys(groupData).length >= 2
     };
   }
 
-  // NEW: Generate unpaired t-test table comparing Trial (Sheet1) vs Control (Sheet2)
+  // UPDATED: Generate improvement percentage table for single sheet or multiple sheets
+  async _generateImprovementPercentageTable(groupData) {
+    try {
+      console.log('Generating improvement percentage table...');
+      
+      // Get available groups
+      const groupKeys = Object.keys(groupData);
+      const groupA = groupData.groupA;
+      const groupB = groupData.groupB || null; // groupB is optional now
+      
+      if (!groupA) {
+        console.warn('Need at least 1 sheet (Group A) for improvement percentage analysis');
+        return null;
+      }
+
+      // Identify parameters in Group A
+      const groupAParams = this._identifyParameterGroups(groupA.sheetData.headers);
+      let groupBParams = [];
+      let commonParams = [];
+
+      if (groupB) {
+        // If we have Group B, find common parameters
+        groupBParams = this._identifyParameterGroups(groupB.sheetData.headers);
+        commonParams = this._findCommonParameters(groupAParams, groupBParams);
+        
+        if (commonParams.length === 0) {
+          console.warn('No common parameters found between Group A and Group B, using Group A parameters only');
+          commonParams = groupAParams.map(param => ({
+            name: param.name,
+            groupA: param,
+            groupB: null
+          }));
+        }
+      } else {
+        // Single sheet mode - use all Group A parameters
+        console.log('Single sheet mode: Using Group A parameters only');
+        commonParams = groupAParams.map(param => ({
+          name: param.name,
+          groupA: param,
+          groupB: null
+        }));
+      }
+
+      if (commonParams.length === 0) {
+        console.warn('No parameters found for improvement percentage analysis');
+        return null;
+      }
+
+      console.log(`Found ${commonParams.length} parameters for improvement analysis`);
+
+      // Calculate improvement percentages
+      const improvementData = this._calculateImprovementPercentages(
+        commonParams, 
+        groupA.sheetData, 
+        groupB ? groupB.sheetData : null
+      );
+
+      // Create the improvement percentage table
+      const improvementTable = {
+        title: groupB ? 
+          'Patient Improvement Analysis by Categories' : 
+          'Patient Improvement Analysis by Categories (Single Group)',
+        type: 'improvement_percentage',
+        sheetNumber: 999, // Special number to distinguish from regular tables
+        sheetName: 'Improvement Analysis',
+        improvementData: improvementData,
+        tableNumber: 999,
+        isSingleGroup: !groupB // Flag to indicate single group analysis
+      };
+
+      return improvementTable;
+
+    } catch (error) {
+      console.error('Error generating improvement percentage table:', error);
+      return null;
+    }
+  }
+
+  // UPDATED: Calculate improvement percentages with support for single group
+  _calculateImprovementPercentages(commonParams, groupAData, groupBData = null) {
+    const timePoints = ['7th', '14th', '21st', '28th'];
+    const categories = [
+      { name: 'Cured(100%)', min: 100, max: Infinity },
+      { name: 'Marked improved(75-100%)', min: 75, max: 100 },
+      { name: 'Moderate improved(50-75%)', min: 50, max: 75 },
+      { name: 'Mild improved(25-50%)', min: 25, max: 50 },
+      { name: 'Not cured(<25%)', min: -Infinity, max: 25 }
+    ];
+
+    const result = {
+      groupA: {},
+      groupB: groupBData ? {} : null, // Only create groupB if we have data
+      timePoints,
+      categories: categories.map(c => c.name),
+      isSingleGroup: !groupBData
+    };
+
+    // Initialize result structure
+    timePoints.forEach(timePoint => {
+      result.groupA[timePoint] = {};
+      if (result.groupB) {
+        result.groupB[timePoint] = {};
+      }
+      
+      categories.forEach(category => {
+        result.groupA[timePoint][category.name] = { count: 0, percentage: 0 };
+        if (result.groupB) {
+          result.groupB[timePoint][category.name] = { count: 0, percentage: 0 };
+        }
+      });
+    });
+
+    // Calculate patient-level averages for Group A
+    const groupAPatientAverages = this._calculatePatientAverageImprovements(
+      commonParams, 
+      groupAData.rows,
+      'A'
+    );
+    
+    // Calculate patient-level averages for Group B (if available)
+    let groupBPatientAverages = null;
+    if (groupBData) {
+      groupBPatientAverages = this._calculatePatientAverageImprovements(
+        commonParams, 
+        groupBData.rows,
+        'B'
+      );
+    }
+
+    // Categorize patient averages for Group A
+    this._categorizePatientAverages(groupAPatientAverages, result.groupA, categories, 'A');
+    
+    // Categorize patient averages for Group B (if available)
+    if (groupBPatientAverages && result.groupB) {
+      this._categorizePatientAverages(groupBPatientAverages, result.groupB, categories, 'B');
+    }
+
+    // Calculate percentages
+    this._calculateFinalPercentages(result.groupA, timePoints, categories);
+    if (result.groupB) {
+      this._calculateFinalPercentages(result.groupB, timePoints, categories);
+    }
+
+    return result;
+  }
+
+  // UPDATED: Calculate patient-level average improvements with null handling for single group
+  _calculatePatientAverageImprovements(commonParams, rows, groupName) {
+    const timePoints = ['7th', '14th', '21st', '28th'];
+    const patientAverages = {
+      '7th': [],
+      '14th': [], 
+      '21st': [],
+      '28th': []
+    };
+
+    console.log(`Processing ${rows.length} patients for Group ${groupName}`);
+
+    rows.forEach((row, rowIndex) => {
+      
+      // For each time point, calculate average improvement across all parameters for this patient
+      timePoints.forEach((timePoint, timeIndex) => {
+        const patientImprovements = []; // Store improvements for all parameters for this patient at this time point
+        
+        commonParams.forEach(commonParam => {
+          // Use the appropriate parameter group based on availability
+          const parameterGroup = (groupName === 'A' || !commonParam.groupB) ? 
+            commonParam.groupA : commonParam.groupB;
+            
+          if (!parameterGroup) return; // Skip if parameter group not available
+          
+          const btValue = row[parameterGroup.btIndex];
+          
+          if (this._isNumeric(btValue) && parseFloat(btValue) !== 0) {
+            const bt = parseFloat(btValue);
+            
+            // Get the AT value for this time point
+            if (timeIndex < parameterGroup.atIndices.length) {
+              const atIndex = parameterGroup.atIndices[timeIndex];
+              const atValue = row[atIndex];
+              
+              if (this._isNumeric(atValue)) {
+                const at = parseFloat(atValue);
+                const improvementPercent = ((bt - at) / bt) * 100;
+                patientImprovements.push(improvementPercent);
+              }
+            }
+          }
+        });
+        
+        // Calculate average improvement for this patient at this time point
+        if (patientImprovements.length > 0) {
+          const averageImprovement = patientImprovements.reduce((sum, imp) => sum + imp, 0) / patientImprovements.length;
+          patientAverages[timePoint].push(averageImprovement);
+          
+          if (rowIndex < 3) { // Debug first few patients
+            console.log(`Group ${groupName} Patient ${rowIndex + 1} ${timePoint}: Individual improvements [${patientImprovements.map(p => p.toFixed(1)).join(', ')}] → Average: ${averageImprovement.toFixed(2)}%`);
+          }
+        }
+      });
+    });
+
+    // Log summary
+    timePoints.forEach(timePoint => {
+      console.log(`Group ${groupName} ${timePoint}: ${patientAverages[timePoint].length} patients processed`);
+    });
+
+    return patientAverages;
+  }
+
+  // Rest of the methods remain the same...
+  // (copying the remaining methods as they were)
+
+  // Generate unpaired t-test table if we have exactly 2 groups (Trial vs Control)
   async _generateUnpairedTTestTable(groupData, existingTables) {
     try {
       console.log('Generating unpaired t-test table...');
@@ -99,7 +312,7 @@ class MasterChartService {
     }
   }
 
-  // NEW: Calculate unpaired t-test statistics using data from paired t-test tables
+  // Calculate unpaired t-test statistics using data from paired t-test tables
   _calculateUnpairedTTestFromPairedTables(trialTable, controlTable) {
     const allStats = [];
 
@@ -138,7 +351,7 @@ class MasterChartService {
     return allStats;
   }
 
-  // NEW: Calculate unpaired t-test statistics using paired t-test results
+  // Calculate unpaired t-test statistics using paired t-test results
   _calculateUnpairedTTestFromPairedStats(trialStat, controlStat) {
     // Use AT means and SDs from the paired t-test tables
     const trialMean = trialStat.meanAT;  // This matches the A.T Mean from Table 27
@@ -181,61 +394,6 @@ class MasterChartService {
     };
   }
 
-  // --- EXISTING METHODS (unchanged) ---
-  
-  // Generate improvement percentage table if we have at least 2 groups
-  async _generateImprovementPercentageTable(groupData) {
-    try {
-      console.log('Generating improvement percentage table...');
-      
-      // Get Group A and Group B data (first two sheets)
-      const groupA = groupData.groupA;
-      const groupB = groupData.groupB;
-      
-      if (!groupA || !groupB) {
-        console.warn('Need at least 2 sheets for improvement percentage analysis');
-        return null;
-      }
-
-      // Identify parameters in both groups
-      const groupAParams = this._identifyParameterGroups(groupA.sheetData.headers);
-      const groupBParams = this._identifyParameterGroups(groupB.sheetData.headers);
-
-      // Find common parameters between groups
-      const commonParams = this._findCommonParameters(groupAParams, groupBParams);
-      
-      if (commonParams.length === 0) {
-        console.warn('No common parameters found between Group A and Group B');
-        return null;
-      }
-
-      console.log(`Found ${commonParams.length} common parameters for improvement analysis`);
-
-      // Calculate improvement percentages for each group and time period
-      const improvementData = this._calculateImprovementPercentages(
-        commonParams, 
-        groupA.sheetData, 
-        groupB.sheetData
-      );
-
-      // Create the improvement percentage table
-      const improvementTable = {
-        title: 'Patient Improvement Analysis by Categories',
-        type: 'improvement_percentage',
-        sheetNumber: 999, // Special number to distinguish from regular tables
-        sheetName: 'Improvement Analysis',
-        improvementData: improvementData,
-        tableNumber: 999
-      };
-
-      return improvementTable;
-
-    } catch (error) {
-      console.error('Error generating improvement percentage table:', error);
-      return null;
-    }
-  }
-
   // Find common parameters between two groups
   _findCommonParameters(groupAParams, groupBParams) {
     const commonParams = [];
@@ -262,122 +420,7 @@ class MasterChartService {
     return name.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
-  // UPDATED: Calculate improvement percentages for all common parameters using patient averages
-  _calculateImprovementPercentages(commonParams, groupAData, groupBData) {
-    const timePoints = ['7th', '14th', '21st', '28th'];
-    const categories = [
-      { name: 'Cured(100%)', min: 100, max: Infinity },
-      { name: 'Marked improved(75-100%)', min: 75, max: 100 },
-      { name: 'Moderate improved(50-75%)', min: 50, max: 75 },
-      { name: 'Mild improved(25-50%)', min: 25, max: 50 },
-      { name: 'Not cured(<25%)', min: -Infinity, max: 25 }
-    ];
-
-    const result = {
-      groupA: {},
-      groupB: {},
-      timePoints,
-      categories: categories.map(c => c.name)
-    };
-
-    // Initialize result structure
-    timePoints.forEach(timePoint => {
-      result.groupA[timePoint] = {};
-      result.groupB[timePoint] = {};
-      
-      categories.forEach(category => {
-        result.groupA[timePoint][category.name] = { count: 0, percentage: 0 };
-        result.groupB[timePoint][category.name] = { count: 0, percentage: 0 };
-      });
-    });
-
-    // UPDATED: Calculate patient-level averages for Group A
-    const groupAPatientAverages = this._calculatePatientAverageImprovements(
-      commonParams, 
-      groupAData.rows,
-      'A'
-    );
-    
-    // UPDATED: Calculate patient-level averages for Group B
-    const groupBPatientAverages = this._calculatePatientAverageImprovements(
-      commonParams, 
-      groupBData.rows,
-      'B'
-    );
-
-    // Categorize patient averages for Group A
-    this._categorizePatientAverages(groupAPatientAverages, result.groupA, categories, 'A');
-    
-    // Categorize patient averages for Group B
-    this._categorizePatientAverages(groupBPatientAverages, result.groupB, categories, 'B');
-
-    // Calculate percentages (counts are already correct since each patient contributes 1 count per time point)
-    this._calculateFinalPercentages(result.groupA, timePoints, categories);
-    this._calculateFinalPercentages(result.groupB, timePoints, categories);
-
-    return result;
-  }
-
-  // NEW: Calculate patient-level average improvement percentages
-  _calculatePatientAverageImprovements(commonParams, rows, groupName) {
-    const timePoints = ['7th', '14th', '21st', '28th'];
-    const patientAverages = {
-      '7th': [],
-      '14th': [], 
-      '21st': [],
-      '28th': []
-    };
-
-    console.log(`Processing ${rows.length} patients for Group ${groupName}`);
-
-    rows.forEach((row, rowIndex) => {
-      
-      // For each time point, calculate average improvement across all parameters for this patient
-      timePoints.forEach((timePoint, timeIndex) => {
-        const patientImprovements = []; // Store improvements for all parameters for this patient at this time point
-        
-        commonParams.forEach(commonParam => {
-          const parameterGroup = groupName === 'A' ? commonParam.groupA : commonParam.groupB;
-          const btValue = row[parameterGroup.btIndex];
-          
-          if (this._isNumeric(btValue) && parseFloat(btValue) !== 0) {
-            const bt = parseFloat(btValue);
-            
-            // Get the AT value for this time point
-            if (timeIndex < parameterGroup.atIndices.length) {
-              const atIndex = parameterGroup.atIndices[timeIndex];
-              const atValue = row[atIndex];
-              
-              if (this._isNumeric(atValue)) {
-                const at = parseFloat(atValue);
-                const improvementPercent = ((bt - at) / bt) * 100;
-                patientImprovements.push(improvementPercent);
-              }
-            }
-          }
-        });
-        
-        // Calculate average improvement for this patient at this time point
-        if (patientImprovements.length > 0) {
-          const averageImprovement = patientImprovements.reduce((sum, imp) => sum + imp, 0) / patientImprovements.length;
-          patientAverages[timePoint].push(averageImprovement);
-          
-          if (rowIndex < 3) { // Debug first few patients
-            console.log(`Group ${groupName} Patient ${rowIndex + 1} ${timePoint}: Individual improvements [${patientImprovements.map(p => p.toFixed(1)).join(', ')}] → Average: ${averageImprovement.toFixed(2)}%`);
-          }
-        }
-      });
-    });
-
-    // Log summary
-    timePoints.forEach(timePoint => {
-      console.log(`Group ${groupName} ${timePoint}: ${patientAverages[timePoint].length} patients processed`);
-    });
-
-    return patientAverages;
-  }
-
-  // NEW: Categorize patient average improvements
+  // Categorize patient average improvements
   _categorizePatientAverages(patientAverages, groupResult, categories, groupName) {
     Object.keys(patientAverages).forEach(timePoint => {
       const averageValues = patientAverages[timePoint];
@@ -419,7 +462,7 @@ class MasterChartService {
     });
   }
 
-  // SIMPLIFIED: Calculate final percentages (totals are already correct)
+  // Calculate final percentages (totals are already correct)
   _calculateFinalPercentages(groupResult, timePoints, categories) {
     timePoints.forEach(timePoint => {
       let total = 0;
@@ -438,8 +481,7 @@ class MasterChartService {
     });
   }
 
-  // --- EXISTING METHODS (unchanged) ---
-  
+  // Rest of existing methods remain unchanged...
   async _extractSheetDataWithMultiRowHeaders(worksheet) {
     const maxHeaderRows = 5;
     const headerRows = [];
